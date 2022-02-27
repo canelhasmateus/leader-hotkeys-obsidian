@@ -1,27 +1,110 @@
-import {
-  App,
-  Modal,
-  Notice,
-  Plugin,
-  PluginSettingTab,
-  Setting,
-} from 'obsidian';
+import { App, Modal, Notice, Plugin, PluginSettingTab, Setting, } from 'obsidian';
 
 type Optional<T> = T | undefined | null;
+type Hash< T > = string
+type ObjectMap< K , V > = Map< Hash< K > , V >
 
+class KeyPress {
+
+  public static of( event : KeyboardEvent ) : KeyPress{
+    const key = event.key
+    const shift = event.shiftKey
+    const meta = event.metaKey || event.ctrlKey
+    return new KeyPress( key, shift, meta )
+  }
+
+  public readonly key: string;
+  public readonly meta: boolean;
+  public readonly shift: boolean;
+
+  constructor( key : string, shift : boolean , meta: boolean){
+    this.key = key
+    this.shift = shift
+    this.meta = meta
+  }
+
+  public repr() : string {
+    return `${this.meta ? '⌘' : ''}${this.shift ? '⇧' : ''}${this.key}`;
+  }
+
+  }
 class Hotkey {
-  public key: string;
-  public meta: boolean;
-  public shift: boolean;
+  public sequence: KeyPress[]
   public commandID: string;
 }
 
-class KeymapTrie {
-  constructor(keymaps: Hotkey[]) {}
-  public availableHotkeys(eventBuffer: KeyboardEvent[]): Hotkey[] {
-    let commands;
-    return commands || [];
+class TrieNode< T > {
+
+  public mapping = new Map< string , TrieNode< T > >()
+  public value : Optional<T>
+
+  public child( key : string ) : Optional< TrieNode< T >> {
+    return this.mapping.get( key )
   }
+
+  public addChild( key : string , child : TrieNode<T>) : void {
+    this.mapping.set( key , child )
+  }
+
+  public allLeaf() : TrieNode<T>[]{
+
+    if ( this.mapping.size === 0 ) {
+      return [ this ]
+    }
+
+
+    let result : TrieNode< T >[] = []
+
+    this.mapping.forEach( ( child , key ) => {
+      result = result.concat( child.allLeaf() )
+    })
+
+    return result
+
+  }
+  public setValue( value: T ) : void {
+    this.value = value
+  }
+
+}
+
+class KeymapTrie {
+  private readonly root: TrieNode< Hotkey>
+  constructor(keymaps: Hotkey[]) {
+    this.root = new TrieNode()
+    let currentNode = this.root
+
+    for (const keymap of keymaps) {
+      for ( const keyPress of keymap.sequence ) {
+          const key = keyPress.repr()
+          let child = currentNode.child( key )
+          child = child || new TrieNode()
+          currentNode.addChild( key , child )
+          currentNode = child
+      }
+      currentNode.setValue( keymap )
+    }
+
+  }
+
+  public availableHotkeys(eventBuffer: KeyboardEvent[]): Hotkey[] {
+
+    let lastNode = this.root
+    for ( const keyboardEvent of eventBuffer ) {
+      const keyPress = KeyPress.of( keyboardEvent )
+      const key = keyPress.repr()
+      const child = lastNode.child( key )
+      if ( !child ) {
+        return []
+      }
+      lastNode = child
+    }
+
+    return lastNode.allLeaf()
+        .map( node => node.value )
+        .filter( node => node !== null )
+  }
+
 }
 
 enum MatchingState {
@@ -36,14 +119,14 @@ class StateMachine {
   private readonly trie: KeymapTrie;
   private currentState: MatchingState;
   private eventBuffer: KeyboardEvent[];
-  private availableHotkeys: Hotkey[];
+  private availableCommands: Hotkey[];
   private matchedHotkey: Optional<Hotkey>;
 
   constructor(hotkeys: Hotkey[]) {
     this.trie = new KeymapTrie(hotkeys);
     this.currentState = MatchingState.NoMatch;
     this.eventBuffer = [];
-    this.availableHotkeys = [];
+    this.availableCommands = [];
     this.matchedHotkey = null;
   }
 
@@ -52,10 +135,10 @@ class StateMachine {
     switch (this.currentState) {
       // Start Matching
       case MatchingState.NoMatch:
-        this.availableHotkeys = this.trie.availableHotkeys(this.eventBuffer);
+        this.availableCommands = this.trie.availableHotkeys(this.eventBuffer);
         {
           // No Match Logic
-          const commandLength = this.availableHotkeys.length;
+          const commandLength = this.availableCommands.length;
           if (commandLength === 0) {
             this.currentState = MatchingState.NoMatch;
           } else if (commandLength === 1) {
@@ -74,9 +157,9 @@ class StateMachine {
       // Continue / Finish Matching
       case MatchingState.LeaderMatch:
       case MatchingState.PartialMatch:
-        this.availableHotkeys = this.trie.availableHotkeys(this.eventBuffer);
+        this.availableCommands = this.trie.availableHotkeys(this.eventBuffer);
         {
-          const commandLength = this.availableHotkeys.length;
+          const commandLength = this.availableCommands.length;
           if (commandLength === 0) {
             this.currentState = MatchingState.ExitMatch;
           } else if (commandLength === 1) {
@@ -95,7 +178,7 @@ class StateMachine {
   }
 
   public getPartialMatchedKeymaps(): readonly Hotkey[] {
-    return this.availableHotkeys;
+    return this.availableCommands;
   }
 
   public getFullyMatchedKeymap(): Optional<Hotkey> {
@@ -117,7 +200,7 @@ class StateMachine {
     }
 
     if (isFullMatch && availableCommandLength === 1) {
-      return this.availableHotkeys[0];
+      return this.availableCommands[0];
     }
     return null;
   }
@@ -125,7 +208,7 @@ class StateMachine {
   private clear(): void {
     this.currentState = MatchingState.NoMatch;
     this.eventBuffer = [];
-    this.availableHotkeys = [];
+    this.availableCommands = [];
     this.matchedHotkey = null;
   }
 }

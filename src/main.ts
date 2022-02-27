@@ -134,8 +134,6 @@ class StateMachine {
   public advance(event: KeyboardEvent): MatchingState {
     const keypress = KeyPress.of( event);
     this.keyPressBuffer.push( keypress );
-    console.log( event );
-      console.log( keypress.repr() , ":" , keypress );
 
     switch (this.currentState) {
       // Start Matching

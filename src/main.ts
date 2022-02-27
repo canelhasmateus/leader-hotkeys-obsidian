@@ -31,10 +31,15 @@ class KeyPress {
     return `${this.meta ? '⌘' : ''}${this.shift ? '⇧' : ''}${this.key}`;
   }
 
-  public containsKey() : boolean{
-    return this.key !== null &&
-           this.key !== undefined &&
-           this.key.length > 0
+  public containsKey(): boolean {
+    return (
+      this.key !== null &&
+      this.key !== undefined &&
+      this.key !== 'Alt' &&
+      this.key !== 'Control' &&
+      this.key !== 'Shift' &&
+      this.key !== 'Meta'
+    );
   }
 }
 class Hotkey {
@@ -132,7 +137,6 @@ class StateMachine {
   }
 
   public advance(keypress: KeyPress): MatchingState {
-
     this.keyPressBuffer.push(keypress);
 
     switch (this.currentState) {
@@ -155,10 +159,11 @@ class StateMachine {
       // Continue / Finish Matching
       case MatchingState.LeaderMatch:
       case MatchingState.PartialMatch:
-          if (!keypress.containsKey()) {
-            this.keyPressBuffer.pop()
-            return this.currentState
-          }
+        if (!keypress.containsKey()) {
+          this.keyPressBuffer.pop();
+          this.currentState = MatchingState.PartialMatch;
+          return this.currentState;
+        }
         {
           const bestMatch = this.trie.bestMatch(this.keyPressBuffer);
           this.availableCommands = bestMatch ? bestMatch.allValues() : [];
@@ -233,7 +238,9 @@ export default class LeaderHotkeysPlugin extends Plugin {
   }
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
+    console.log(event);
     const keypress = KeyPress.of(event);
+    console.log(keypress);
     const currentState = this.state.advance(keypress);
     switch (currentState) {
       case MatchingState.NoMatch:

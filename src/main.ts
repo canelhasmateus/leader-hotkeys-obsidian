@@ -675,10 +675,21 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
 }
 
 const defaultHotkeys: Hotkey[] = [
-  { key: 'h', meta: false, shift: false, commandID: 'editor:focus-left' },
-  { key: 'j', meta: false, shift: false, commandID: 'editor:focus-bottom' },
-  { key: 'k', meta: false, shift: false, commandID: 'editor:focus-top' },
-  { key: 'l', meta: false, shift: false, commandID: 'editor:focus-right' },
+  { sequence : [ new KeyPress( 'b' , false , true) ,
+                 new KeyPress( 'h' , false , false)  ],
+    commandID : 'editor:focus-left'}, 
+  { sequence : [ new KeyPress( 'b' , false , true) ,
+                 new KeyPress( 'j' , false , false)  ],
+    commandID : 'editor:focus-bottom'}, 
+  { sequence : [ new KeyPress( 'b' , false , true) ,
+                 new KeyPress( 'k' , false , false)  ],
+    commandID : 'editor:focus-top'}, 
+  { sequence : [ new KeyPress( 'b' , false , true) ,
+                 new KeyPress( 'l' , false , false)  ],
+    commandID : 'editor:focus-right'},
+  { sequence : [ new KeyPress( 'q' , false , true) ,
+                 new KeyPress( '1' , false , false)  ],
+    commandID : 'command-palette:open'},
 ];
 const defaultSettings: PluginSettings = {
   hotkeys: defaultHotkeys,

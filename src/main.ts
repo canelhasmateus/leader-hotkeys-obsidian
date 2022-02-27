@@ -72,26 +72,27 @@ class KeymapTrie {
   private readonly root: TrieNode< Hotkey>
   constructor(keymaps: Hotkey[]) {
     this.root = new TrieNode()
-    let currentNode = this.root
 
+    writeConsole('Creating trie from keymaps')
     for (const keymap of keymaps) {
+      let lastSeenNode = this.root
       for ( const keyPress of keymap.sequence ) {
-          const key = keyPress.repr()
-          let child = currentNode.child( key )
-          child = child || new TrieNode()
-          currentNode.addChild( key , child )
-          currentNode = child
+        const key = keyPress.repr()
+        const child = lastSeenNode.child( key ) || new TrieNode()
+        lastSeenNode.addChild( key , child )
+        lastSeenNode = child
       }
-      currentNode.setValue( keymap )
+      lastSeenNode.setValue( keymap )
     }
+
 
   }
 
-  public availableHotkeys(eventBuffer: KeyboardEvent[]): Hotkey[] {
+  public availableHotkeys(keyPresses: KeyPress[]): Hotkey[] {
+
 
     let lastNode = this.root
-    for ( const keyboardEvent of eventBuffer ) {
-      const keyPress = KeyPress.of( keyboardEvent )
+    for ( const keyPress of keyPresses ) {
       const key = keyPress.repr()
       const child = lastNode.child( key )
       if ( !child ) {
@@ -118,38 +119,34 @@ enum MatchingState {
 class StateMachine {
   private readonly trie: KeymapTrie;
   private currentState: MatchingState;
-  private eventBuffer: KeyboardEvent[];
+  private keyPressBuffer: KeyPress[];
   private availableCommands: Hotkey[];
   private matchedHotkey: Optional<Hotkey>;
 
   constructor(hotkeys: Hotkey[]) {
     this.trie = new KeymapTrie(hotkeys);
     this.currentState = MatchingState.NoMatch;
-    this.eventBuffer = [];
+    this.keyPressBuffer = [];
     this.availableCommands = [];
     this.matchedHotkey = null;
   }
 
   public advance(event: KeyboardEvent): MatchingState {
-    this.eventBuffer.push(event);
+    const keypress = KeyPress.of( event);
+    this.keyPressBuffer.push( keypress );
+    console.log( event );
+      console.log( keypress.repr() , ":" , keypress );
+
     switch (this.currentState) {
       // Start Matching
       case MatchingState.NoMatch:
-        this.availableCommands = this.trie.availableHotkeys(this.eventBuffer);
+        this.availableCommands = this.trie.availableHotkeys(this.keyPressBuffer);
         {
           // No Match Logic
           const commandLength = this.availableCommands.length;
           if (commandLength === 0) {
-            this.currentState = MatchingState.NoMatch;
-          } else if (commandLength === 1) {
-            writeConsole(
-              'Reached FullMatch from NoMatch state.' +
-                'Currently, we should not be able to fully match a command from  a single hotkey.' +
-                'This is definitely a bug.',
-            );
-            this.currentState = MatchingState.FullMatch;
+            this.clear()
           } else {
-            // Matching should always start with the leader key.
             this.currentState = MatchingState.LeaderMatch;
           }
         }
@@ -157,7 +154,7 @@ class StateMachine {
       // Continue / Finish Matching
       case MatchingState.LeaderMatch:
       case MatchingState.PartialMatch:
-        this.availableCommands = this.trie.availableHotkeys(this.eventBuffer);
+        this.availableCommands = this.trie.availableHotkeys(this.keyPressBuffer);
         {
           const commandLength = this.availableCommands.length;
           if (commandLength === 0) {
@@ -192,12 +189,6 @@ class StateMachine {
       );
       return null;
     }
-    if (!isFullMatch && availableCommandLength === 1) {
-      writeConsole(
-        'State Machine availableHotkeys contains 1 element, but not in FullMatch State. This is definitely a bug.',
-      );
-      return null;
-    }
 
     if (isFullMatch && availableCommandLength === 1) {
       return this.availableCommands[0];
@@ -207,7 +198,7 @@ class StateMachine {
 
   private clear(): void {
     this.currentState = MatchingState.NoMatch;
-    this.eventBuffer = [];
+    this.keyPressBuffer = [];
     this.availableCommands = [];
     this.matchedHotkey = null;
   }
@@ -241,32 +232,32 @@ export default class LeaderHotkeysPlugin extends Plugin {
     switch (currentState) {
       case MatchingState.NoMatch:
         writeConsole(
-          'An unregistered key was pressed. Letting this event pass.',
+          'An keypress resulted in a NoMatch state. Letting this event pass.',
         );
         return;
 
       case MatchingState.ExitMatch:
         event.preventDefault();
         writeConsole(
-          'An unregistered key was pressed after leader matching. Exiting matching state.',
+          'An keypress resulted in a ExitMatch. Exiting matching state.',
         );
         return;
 
       case MatchingState.LeaderMatch:
         event.preventDefault();
-        writeConsole('A leader key was pressed. Entering matching state.');
+        writeConsole('An keypress resulted in a LeaderMatch. Entering matching state.');
         return;
 
       case MatchingState.PartialMatch:
         event.preventDefault();
         writeConsole(
-          'A registered key was pressed. Waiting for the rest of the key sequence.',
+          'An keypress resulted in a ParialMatch. Waiting for the rest of the key sequence.',
         );
         return;
 
       case MatchingState.FullMatch:
         event.preventDefault();
-        writeConsole('A full match was found. Dispatching keymap.');
+        writeConsole('An keypress resulted in a FullMatch. Dispatching keymap.');
         const keymap = this.state.getFullyMatchedKeymap();
         if (keymap) {
           const app = this.app as any;
@@ -310,9 +301,9 @@ export default class LeaderHotkeysPlugin extends Plugin {
     const leaderKeyCommand = {
       id: 'leader',
       name: 'Leader key',
-      // callback: () => {
-      // 	this.state.enterLeaderMode();
-      // },
+      callback: () => {
+      //	need something here.
+      },
     };
     this.addCommand(leaderKeyCommand);
   }

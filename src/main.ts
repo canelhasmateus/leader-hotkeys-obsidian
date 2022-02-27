@@ -24,15 +24,21 @@ class Hotkey {
 
 interface Settings {
   hotkeys: Hotkey[];
+  leader: KeyboardEvent;
 }
 
-class KeymapTrie {
+class CommandTrie {
   public add(hotkey: Hotkey): void {}
 
   public addAll(hotkeys: Hotkey[]): void {
     for (const hotkey of hotkeys) {
       this.add(hotkey);
     }
+  }
+
+  public availableCommands(eventBuffer: KeyboardEvent[]): Command[] {
+    let commands;
+    return commands || [];
   }
 }
 
@@ -46,18 +52,18 @@ enum KeymapMatchState {
 
 class StateMachine {
   public static fromSettings(settings: Settings): StateMachine {
-    const trie = new KeymapTrie();
+    const trie = new CommandTrie();
     trie.addAll(settings.hotkeys);
     return new StateMachine(trie);
   }
 
-  public currentState: KeymapMatchState;
-  private trie: KeymapTrie;
+  private readonly trie: CommandTrie;
+  private currentState: KeymapMatchState;
   private eventBuffer: KeyboardEvent[];
   private availableCommands: Command[];
   private matchedCommand: Optional<Command>;
 
-  constructor(trie: KeymapTrie) {
+  constructor(trie: CommandTrie) {
     this.trie = trie;
     this.currentState = KeymapMatchState.NoMatch;
     this.eventBuffer = [];
@@ -68,39 +74,76 @@ class StateMachine {
   public advance(event: KeyboardEvent): KeymapMatchState {
     this.eventBuffer.push(event);
     switch (this.currentState) {
+      // Start Matching
       case KeymapMatchState.NoMatch:
-
-        return KeymapMatchState.NoMatch;
+        this.availableCommands = this.trie.availableCommands(this.eventBuffer);
+        {
+          // No Match Logic
+          const commandLength = this.availableCommands.length;
+          if (commandLength === 0) {
+            this.currentState = KeymapMatchState.NoMatch;
+          } else if (commandLength === 1) {
+            writeConsole(
+              'Reached FullMatch from NoMatch state.' +
+                'Currently, we should not be able to fully match a command from  a single hotkey.' +
+                'This is definitely a bug.',
+            );
+            this.currentState = KeymapMatchState.FullMatch;
+          } else {
+            // Matching should always start with the leader key.
+            this.currentState = KeymapMatchState.LeaderMatch;
+          }
+        }
+        return this.currentState;
+      // Continue / Finish Matching
       case KeymapMatchState.LeaderMatch:
-        return this.currentState;
       case KeymapMatchState.PartialMatch:
+        this.availableCommands = this.trie.availableCommands(this.eventBuffer);
+        {
+          const commandLength = this.availableCommands.length;
+          if (commandLength === 0) {
+            this.currentState = KeymapMatchState.ExitMatch;
+          } else if (commandLength === 1) {
+            this.currentState = KeymapMatchState.FullMatch;
+          } else {
+            this.currentState = KeymapMatchState.PartialMatch;
+          }
+        }
         return this.currentState;
+      // Clear previous matching and rematch. this is a bit confusing. Can we do better?
       case KeymapMatchState.FullMatch:
-		case KeymapMatchState.ExitMatch:
-		  // todo this is a bit confusing. Can we do better?
+      case KeymapMatchState.ExitMatch:
         this.clear();
         return this.advance(event);
     }
   }
 
-  public enterLeaderMode(): void {
-    writeConsole('Entering leader mode');
-    this.currentState = KeymapMatchState.LeaderMatch;
-  }
-
-  public setTrie(trie: KeymapTrie): void {
-    this.trie = trie;
-    this.clear();
-  }
-
-  public getAvailableCommands(): Command[] {
-    // todo: implement
+  public getAvailableCommands(): readonly Command[] {
     return this.availableCommands;
   }
 
   public getFullyMatchedCommand(): Optional<Command> {
-    // todo: implement
-    return this.matchedCommand;
+    const availableCommandLength = this.getAvailableCommands().length;
+    const isFullMatch = this.currentState === KeymapMatchState.FullMatch;
+
+    // Sanity checking.
+    if (isFullMatch && availableCommandLength !== 1) {
+      writeConsole(
+        'State Machine in FullMatch state, but availableCommands.length contains more than 1 element. This is definitely a bug.',
+      );
+      return null;
+    }
+    if (!isFullMatch && availableCommandLength === 1) {
+      writeConsole(
+        'State Machine availableCommands contains 1 element, but not in FullMatch State. This is definitely a bug.',
+      );
+      return null;
+    }
+
+    if (isFullMatch && availableCommandLength === 1) {
+      return this.availableCommands[0];
+    }
+    return null;
   }
 
   private clear(): void {
@@ -108,31 +151,6 @@ class StateMachine {
     this.eventBuffer = [];
     this.availableCommands = [];
     this.matchedCommand = null;
-  }
-
-  private allowedTransitions(
-    startingState: KeymapMatchState,
-  ): Set<KeymapMatchState> {
-    switch (startingState) {
-      case KeymapMatchState.NoMatch:
-        return new Set([KeymapMatchState.LeaderMatch]);
-      case KeymapMatchState.LeaderMatch:
-        return new Set([
-          KeymapMatchState.PartialMatch,
-          KeymapMatchState.FullMatch,
-          KeymapMatchState.ExitMatch,
-        ]);
-      case KeymapMatchState.PartialMatch:
-        return new Set([
-          KeymapMatchState.PartialMatch,
-          KeymapMatchState.FullMatch,
-          KeymapMatchState.ExitMatch,
-        ]);
-      case KeymapMatchState.FullMatch:
-        return new Set([KeymapMatchState.NoMatch]);
-      case KeymapMatchState.ExitMatch:
-        return new Set([KeymapMatchState.NoMatch]);
-    }
   }
 }
 
@@ -229,9 +247,9 @@ export default class LeaderHotkeysPlugin extends Plugin {
     const leaderKeyCommand = {
       id: 'leader',
       name: 'Leader key',
-      callback: () => {
-        this.state.enterLeaderMode();
-      },
+      // callback: () => {
+      // 	this.state.enterLeaderMode();
+      // },
     };
     this.addCommand(leaderKeyCommand);
   }
@@ -596,6 +614,8 @@ const defaultHotkeys: Hotkey[] = [
 ];
 const defaultSettings: Settings = {
   hotkeys: defaultHotkeys,
+  // todo clear this up. very inelegant.
+  leader: new KeyboardEvent('keydown', {}),
 };
 
 const PLUGIN_NAME = 'Leader Hotkeys';

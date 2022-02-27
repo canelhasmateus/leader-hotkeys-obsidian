@@ -24,7 +24,6 @@ class Hotkey {
 
 interface Settings {
   hotkeys: Hotkey[];
-  leader: KeyboardEvent;
 }
 
 class CommandTrie {
@@ -614,8 +613,6 @@ const defaultHotkeys: Hotkey[] = [
 ];
 const defaultSettings: Settings = {
   hotkeys: defaultHotkeys,
-  // todo clear this up. very inelegant.
-  leader: new KeyboardEvent('keydown', {}),
 };
 
 const PLUGIN_NAME = 'Leader Hotkeys';

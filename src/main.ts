@@ -1,11 +1,14 @@
 import {
   App,
+  Keymap,
   Modal,
   Notice,
   Plugin,
   PluginSettingTab,
   Setting,
 } from 'obsidian';
+
+type Optional<T> = T | undefined | null;
 
 interface Command {
   name: string;
@@ -23,12 +26,119 @@ interface Settings {
   hotkeys: Hotkey[];
 }
 
+class KeymapTrie {
+  public add(hotkey: Hotkey): void {}
+
+  public addAll(hotkeys: Hotkey[]): void {
+    for (const hotkey of hotkeys) {
+      this.add(hotkey);
+    }
+  }
+}
+
+enum KeymapMatchState {
+  NoMatch,
+  LeaderMatch,
+  PartialMatch,
+  FullMatch,
+  ExitMatch,
+}
+
+class StateMachine {
+  public static fromSettings(settings: Settings): StateMachine {
+    const trie = new KeymapTrie();
+    trie.addAll(settings.hotkeys);
+    return new StateMachine(trie);
+  }
+
+  public currentState: KeymapMatchState;
+  private trie: KeymapTrie;
+  private eventBuffer: KeyboardEvent[];
+  private availableCommands: Command[];
+  private matchedCommand: Optional<Command>;
+
+  constructor(trie: KeymapTrie) {
+    this.trie = trie;
+    this.currentState = KeymapMatchState.NoMatch;
+    this.eventBuffer = [];
+    this.availableCommands = [];
+    this.matchedCommand = null;
+  }
+
+  public advance(event: KeyboardEvent): KeymapMatchState {
+    this.eventBuffer.push(event);
+    switch (this.currentState) {
+      case KeymapMatchState.NoMatch:
+
+        return KeymapMatchState.NoMatch;
+      case KeymapMatchState.LeaderMatch:
+        return this.currentState;
+      case KeymapMatchState.PartialMatch:
+        return this.currentState;
+      case KeymapMatchState.FullMatch:
+		case KeymapMatchState.ExitMatch:
+		  // todo this is a bit confusing. Can we do better?
+        this.clear();
+        return this.advance(event);
+    }
+  }
+
+  public enterLeaderMode(): void {
+    writeConsole('Entering leader mode');
+    this.currentState = KeymapMatchState.LeaderMatch;
+  }
+
+  public setTrie(trie: KeymapTrie): void {
+    this.trie = trie;
+    this.clear();
+  }
+
+  public getAvailableCommands(): Command[] {
+    // todo: implement
+    return this.availableCommands;
+  }
+
+  public getFullyMatchedCommand(): Optional<Command> {
+    // todo: implement
+    return this.matchedCommand;
+  }
+
+  private clear(): void {
+    this.currentState = KeymapMatchState.NoMatch;
+    this.eventBuffer = [];
+    this.availableCommands = [];
+    this.matchedCommand = null;
+  }
+
+  private allowedTransitions(
+    startingState: KeymapMatchState,
+  ): Set<KeymapMatchState> {
+    switch (startingState) {
+      case KeymapMatchState.NoMatch:
+        return new Set([KeymapMatchState.LeaderMatch]);
+      case KeymapMatchState.LeaderMatch:
+        return new Set([
+          KeymapMatchState.PartialMatch,
+          KeymapMatchState.FullMatch,
+          KeymapMatchState.ExitMatch,
+        ]);
+      case KeymapMatchState.PartialMatch:
+        return new Set([
+          KeymapMatchState.PartialMatch,
+          KeymapMatchState.FullMatch,
+          KeymapMatchState.ExitMatch,
+        ]);
+      case KeymapMatchState.FullMatch:
+        return new Set([KeymapMatchState.NoMatch]);
+      case KeymapMatchState.ExitMatch:
+        return new Set([KeymapMatchState.NoMatch]);
+    }
+  }
+}
+
 export default class LeaderHotkeysPlugin extends Plugin {
   public settings: Settings;
-
-  private leaderPending: boolean;
-
-  private readonly editorKeydown = 'keydown';
+  private state: StateMachine;
 
   public async onload(): Promise<void> {
     writeConsole('Started Loading.');
@@ -46,42 +156,47 @@ export default class LeaderHotkeysPlugin extends Plugin {
   }
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
-    if (!this.leaderPending) {
-      return;
-    }
+    const currentState = this.state.advance(event);
+    switch (currentState) {
+      case KeymapMatchState.NoMatch:
+        writeConsole(
+          'An unregistered key was pressed. Letting this event pass.',
+        );
+        return;
 
-    if (event.key === 'Shift' || event.key === 'Meta') {
-      // Don't clear leaderPending for a meta key
-      console.debug('skipping a meta key');
-      return;
-    }
+      case KeymapMatchState.ExitMatch:
+        event.preventDefault();
+        writeConsole(
+          'An unregistered key was pressed after leader matching. Exiting matching state.',
+        );
+        return;
 
-    let commandFound = false;
-    for (let i = 0; i < this.settings.hotkeys.length; i++) {
-      const evaluatingHotkey = this.settings.hotkeys[i];
-      if (evaluatingHotkey.key === event.key) {
-        if (
-          // check true and false to catch commands with meta/shift undefined
-          ((event.metaKey && evaluatingHotkey.meta) ||
-            (!event.metaKey && !evaluatingHotkey.meta)) &&
-          ((event.shiftKey && evaluatingHotkey.shift) ||
-            (!event.shiftKey && !evaluatingHotkey.shift))
-        ) {
-          (this.app as any).commands.executeCommandById(
-            this.settings.hotkeys[i].commandID,
+      case KeymapMatchState.LeaderMatch:
+        event.preventDefault();
+        writeConsole('A leader key was pressed. Entering matching state.');
+        return;
+
+      case KeymapMatchState.PartialMatch:
+        event.preventDefault();
+        writeConsole(
+          'A registered key was pressed. Waiting for the rest of the key sequence.',
+        );
+        return;
+
+      case KeymapMatchState.FullMatch:
+        event.preventDefault();
+        writeConsole('A full match was found. Dispatching command.');
+        const command = this.state.getFullyMatchedCommand();
+        if (command) {
+          const app = this.app as any;
+          app.commands.executeCommandById(command.id);
+        } else {
+          writeConsole(
+            'No command found for the full match. This is definitely a bug.',
           );
-          event.preventDefault();
-          commandFound = true;
-          break;
         }
-      }
+        return;
     }
-
-    if (!commandFound) {
-      console.debug('cancelling leader');
-    }
-
-    this.leaderPending = false;
   };
 
   private async _loadSettings(): Promise<void> {
@@ -98,6 +213,7 @@ export default class LeaderHotkeysPlugin extends Plugin {
     }
 
     this.settings = savedSettings || defaultSettings;
+    this.state = StateMachine.fromSettings(this.settings);
   }
 
   private async _registerWorkspaceEvents(): Promise<void> {
@@ -105,8 +221,7 @@ export default class LeaderHotkeysPlugin extends Plugin {
 
     const workspaceContainer = this.app.workspace.containerEl;
     this.registerDomEvent(workspaceContainer, 'keydown', this.handleKeyDown);
-
-    writeConsole('Successfully registered event callbacks.');
+    writeConsole('Registered workspace "keydown" event callbacks.');
   }
 
   private async _registerLeaderKeymap(): Promise<void> {
@@ -115,8 +230,7 @@ export default class LeaderHotkeysPlugin extends Plugin {
       id: 'leader',
       name: 'Leader key',
       callback: () => {
-        writeConsole('Leader pressed...');
-        this.leaderPending = true;
+        this.state.enterLeaderMode();
       },
     };
     this.addCommand(leaderKeyCommand);

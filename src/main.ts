@@ -148,6 +148,7 @@ class Trie<T extends TrieAble> {
 // endregion
 
 // region Fundamental Domain
+
 class KeyPress implements Hashable {
 
 	// region static constructors
@@ -237,6 +238,7 @@ class KeyPress implements Hashable {
 }
 
 class KeyMap implements Iterable<KeyPress> {
+
 	public sequence: KeyPress[];
 	public commandID: string;
 
@@ -248,6 +250,7 @@ class KeyMap implements Iterable<KeyPress> {
 	public [ Symbol.iterator ](): Iterator<KeyPress> {
 		return this.sequence.values();
 	}
+
 
 }
 
@@ -376,7 +379,7 @@ export default class LeaderHotkeysPlugin extends Plugin {
 	public async onload(): Promise<void> {
 		writeConsole( 'Started Loading.' );
 
-		await this._loadSettings();
+		await this._loadKeymaps();
 		await this._registerWorkspaceEvents();
 		await this._registerLeaderKeymap();
 		await this._registerPeripheralUIElements();
@@ -440,7 +443,7 @@ export default class LeaderHotkeysPlugin extends Plugin {
 		}
 	};
 
-	private async _loadSettings(): Promise<void> {
+	private async _loadKeymaps(): Promise<void> {
 		writeConsole( 'Loading previously saved settings.' );
 
 		const savedSettings = await this.loadData();
@@ -454,7 +457,9 @@ export default class LeaderHotkeysPlugin extends Plugin {
 		}
 
 		this.settings = savedSettings || defaultSettings;
-		this.matcher  = new KeyMatcher( this.settings.hotkeys );
+		// const keymaps = this.settings.hotkeys.map( KeyMap.fromLike )
+			const keymaps = this.settings.hotkeys
+		this.matcher  = new KeyMatcher( keymaps );
 	}
 
 	private async _registerWorkspaceEvents(): Promise<void> {
@@ -866,11 +871,22 @@ const defaultHotkeys: KeyMap[]       = [
 		KeyPress.ctrl( 'b' ), KeyPress.just( 'j' )
 	] ),
 	new KeyMap( 'command-palette:open', [
-		KeyPress.ctrl( 'b' ),
+		KeyPress.ctrl( 'q' ),
 		KeyPress.just( '1' ),
 		KeyPress.just( '2' ),
 		KeyPress.just( '2' )
-	] )
+	] ),
+	new KeyMap( 'command-palette:open', [
+		KeyPress.ctrl( ' ' ),
+		KeyPress.just( 'p' ),
+		KeyPress.just( 'a' ),
+		KeyPress.just( 'l' ),
+		KeyPress.just( 'l' ),
+		KeyPress.just( 'e' ),
+		KeyPress.just( 't' ),
+		KeyPress.just( 't' ),
+		KeyPress.just( 'e' ),
+	] ),
 ];
 const defaultSettings: SavedSettings = {
 	hotkeys: defaultHotkeys,

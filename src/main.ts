@@ -104,7 +104,7 @@ class KeyPress implements Hashable{
 		return new KeyPress( key, shift, alt, ctrl, meta );
 	}
 
-	public static fromCustom( binding: CustomCommandEntry ): KeyPress {
+	public static fromCustom( binding: CustomCommand ): KeyPress {
 		console.log( binding );
 		const key   = binding.key
 		const shift = binding.modifiers.contains( 'Shift' );
@@ -164,10 +164,22 @@ class KeyMap implements Iterable<KeyPress>{
 		return this.sequence.values();
 	}
 }
+
+interface SavedSettings {
+	hotkeys: KeyMap[];
+}
 // endregion
 
-// region Workspace Keymap Management
-enum MatchingState {
+
+// region Workspace Keymap Matching
+
+interface StateMachine< K , T > {
+	// Would love to restrict T to a finite set ( T extends Enum),
+	// but it's not possible to do that in TypeScript
+	advance : ( event: K ) => T
+}
+
+enum MatchingKeyMap  {
 	NoMatch,
 	StartedMatch,
 	RetainedMatch,
@@ -176,45 +188,45 @@ enum MatchingState {
 	InvalidMatch,
 }
 
-class MatchingMachine {
+class KeyMatcher implements StateMachine<KeyPress, MatchingKeyMap> {
 	private readonly trie: Trie< KeyMap>;
-	private currentState: MatchingState;
+	private currentState: MatchingKeyMap;
 	private currentSequence: KeyPress[];
 	private currentMatches: KeyMap[];
 
 	constructor( hotkeys: KeyMap[] ) {
 		this.trie              = new Trie( hotkeys );
-		this.currentState      = MatchingState.NoMatch;
+		this.currentState      = MatchingKeyMap.NoMatch;
 		this.currentSequence    = [];
 		this.currentMatches = [];
 	}
 
-	public advance( keypress: KeyPress ): MatchingState {
+	public advance( keypress: KeyPress ): MatchingKeyMap {
 		this.currentSequence.push( keypress );
 
 		switch ( this.currentState ) {
 			// Start Matching
-			case MatchingState.NoMatch: {
+			case MatchingKeyMap.NoMatch: {
 				const bestMatch        = this.trie.bestMatch( this.currentSequence );
 				this.currentMatches = bestMatch ? bestMatch.leafValues() : [];
 				// No Match Logic
 				if ( !bestMatch ) {
 					this.reset();
-					this.currentState = MatchingState.NoMatch;
+					this.currentState = MatchingKeyMap.NoMatch;
 				} else if ( bestMatch.isLeaf() ) {
-					this.currentState = MatchingState.SuccessMatch;
+					this.currentState = MatchingKeyMap.SuccessMatch;
 				} else {
-					this.currentState = MatchingState.StartedMatch;
+					this.currentState = MatchingKeyMap.StartedMatch;
 				}
 			}
 				return this.currentState;
 			// Continue / Finish Matching
-			case MatchingState.StartedMatch:
-			case MatchingState.RetainedMatch:
-			case MatchingState.ImprovedMatch:
+			case MatchingKeyMap.StartedMatch:
+			case MatchingKeyMap.RetainedMatch:
+			case MatchingKeyMap.ImprovedMatch:
 				if ( !keypress.containsKey() ) {
 					this.currentSequence.pop();
-					this.currentState = MatchingState.RetainedMatch;
+					this.currentState = MatchingKeyMap.RetainedMatch;
 					return this.currentState;
 				}
 			{
@@ -222,17 +234,17 @@ class MatchingMachine {
 				this.currentMatches = bestMatch ? bestMatch.leafValues() : [];
 
 				if ( !bestMatch ) {
-					this.currentState = MatchingState.InvalidMatch;
+					this.currentState = MatchingKeyMap.InvalidMatch;
 				} else if ( bestMatch.isLeaf() ) {
-					this.currentState = MatchingState.SuccessMatch;
+					this.currentState = MatchingKeyMap.SuccessMatch;
 				} else {
-					this.currentState = MatchingState.ImprovedMatch;
+					this.currentState = MatchingKeyMap.ImprovedMatch;
 				}
 			}
 				return this.currentState;
 			// Clear previous matching and rematch
-			case MatchingState.SuccessMatch:
-			case MatchingState.InvalidMatch:
+			case MatchingKeyMap.SuccessMatch:
+			case MatchingKeyMap.InvalidMatch:
 				this.reset();
 				return this.advance( keypress );
 		}
@@ -244,7 +256,7 @@ class MatchingMachine {
 
 	public fullMatch(): Optional<KeyMap> {
 		const availableCommandLength = this.allMatches().length;
-		const isFullMatch            = this.currentState === MatchingState.SuccessMatch;
+		const isFullMatch            = this.currentState === MatchingKeyMap.SuccessMatch;
 
 		// Sanity checking.
 		if ( isFullMatch && availableCommandLength !== 1 ) {
@@ -261,7 +273,7 @@ class MatchingMachine {
 	}
 
 	private reset(): void {
-		this.currentState      = MatchingState.NoMatch;
+		this.currentState      = MatchingKeyMap.NoMatch;
 		this.currentSequence    = [];
 		this.currentMatches = [];
 	}
@@ -269,18 +281,17 @@ class MatchingMachine {
 // endregion
 
 
-interface PluginSettings {
-	hotkeys: KeyMap[];
-}
 
-interface CommandEntry {
-
+// region Obsidian Type Shim
+interface ObsidianCommand {
 	callback: () => void
 	icon: string
 	id: string
 	name: string
+}
 
-
+interface CommandMap {
+	[ key: string ]: ObsidianCommand
 }
 
 interface ObsidianApp {
@@ -313,18 +324,17 @@ interface ObsidianApp {
 	workspace
 }
 
-interface CustomCommandEntry {
+interface CustomCommand {
 	key: string
 	modifiers: string[]
 }
 
-interface CommandHolder {
-	[ key: string ]: CommandEntry
-}
+
+// endregion
 
 export default class LeaderHotkeysPlugin extends Plugin {
-	public settings: PluginSettings;
-	private state: MatchingMachine;
+	public settings: SavedSettings;
+	private state: KeyMatcher;
 
 	public async onload(): Promise<void> {
 		writeConsole( 'Started Loading.' );
@@ -347,34 +357,34 @@ export default class LeaderHotkeysPlugin extends Plugin {
 		console.log( keypress );
 		const currentState = this.state.advance( keypress );
 		switch ( currentState ) {
-			case MatchingState.NoMatch:
+			case MatchingKeyMap.NoMatch:
 				writeConsole(
 					'An keypress resulted in a NoMatch state. Letting this event pass.',
 				);
 				return;
 
-			case MatchingState.InvalidMatch:
+			case MatchingKeyMap.InvalidMatch:
 				event.preventDefault();
 				writeConsole(
 					'An keypress resulted in a ExitMatch. Exiting matching state.',
 				);
 				return;
 
-			case MatchingState.StartedMatch:
+			case MatchingKeyMap.StartedMatch:
 				event.preventDefault();
 				writeConsole(
 					'An keypress resulted in a LeaderMatch. Entering matching state.',
 				);
 				return;
 
-			case MatchingState.ImprovedMatch:
+			case MatchingKeyMap.ImprovedMatch:
 				event.preventDefault();
 				writeConsole(
 					'An keypress resulted in a ParialMatch. Waiting for the rest of the key sequence.',
 				);
 				return;
 
-			case MatchingState.SuccessMatch:
+			case MatchingKeyMap.SuccessMatch:
 				event.preventDefault();
 				writeConsole(
 					'An keypress resulted in a FullMatch. Dispatching keymap.',
@@ -406,7 +416,7 @@ export default class LeaderHotkeysPlugin extends Plugin {
 		}
 
 		this.settings = savedSettings || defaultSettings;
-		this.state    = new MatchingMachine( this.settings.hotkeys );
+		this.state    = new KeyMatcher( this.settings.hotkeys );
 	}
 
 	private async _registerWorkspaceEvents(): Promise<void> {
@@ -491,10 +501,10 @@ class SetHotkeyModal extends Modal {
 
 class LeaderPluginSettingsTab extends PluginSettingTab {
 
-	private static readonly listCommands = ( app: App, query?: string ): CommandEntry[] => {
+	private static readonly listCommands = ( app: App, query?: string ): ObsidianCommand[] => {
 
 		const anyApp                  = app as any
-		const commands: CommandHolder = anyApp.commands.commands;
+		const commands: CommandMap = anyApp.commands.commands;
 		let result                    = Object.values( commands )
 
 		if ( query ) {
@@ -514,7 +524,7 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
 
 	};
 	private readonly plugin: LeaderHotkeysPlugin;
-	private commands: CommandEntry[];
+	private commands: ObsidianCommand[];
 
 	private tempNewHotkey: KeyMap;
 
@@ -824,7 +834,7 @@ const defaultHotkeys: KeyMap[] = [
 		commandID: 'command-palette:open',
 	},
 ];
-const defaultSettings: PluginSettings      = {
+const defaultSettings: SavedSettings      = {
 	hotkeys: defaultHotkeys,
 };
 

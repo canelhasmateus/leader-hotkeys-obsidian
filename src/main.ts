@@ -287,8 +287,8 @@ class KeyMatcher implements StateMachine<KeyPress, KeyMatchingState> {
 	private currentSequence: KeyPress[];
 	private currentMatches: KeyMap[];
 
-	constructor( hotkeys: KeyMap[] ) {
-		this.trie            = new Trie( hotkeys );
+	constructor( trie : Trie< KeyMap> ) {
+		this.trie = trie;
 		this.currentState    = KeyMatchingState.NoMatch;
 		this.currentSequence = [];
 		this.currentMatches  = [];
@@ -378,6 +378,7 @@ class KeyMatcher implements StateMachine<KeyPress, KeyMatchingState> {
 
 export default class LeaderHotkeysPlugin extends Plugin {
 	public settings: SavedSettings;
+	private trie: Trie< KeyMap>
 	private matcher: KeyMatcher;
 
 	public async onload(): Promise<void> {
@@ -461,9 +462,8 @@ export default class LeaderHotkeysPlugin extends Plugin {
 		}
 
 		this.settings = savedSettings || defaultSettings;
-		// const keymaps = this.settings.hotkeys.map( KeyMap.fromLike )
-			const keymaps = this.settings.hotkeys
-		this.matcher  = new KeyMatcher( keymaps );
+		this.trie            = new Trie( this.settings.hotkeys );
+		this.matcher  = new KeyMatcher( this.trie );
 	}
 
 	private async _registerWorkspaceEvents(): Promise<void> {

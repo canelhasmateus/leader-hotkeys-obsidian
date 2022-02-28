@@ -326,7 +326,7 @@ enum MatchClassification {
   PartialMatch,
   FullMatch,
 }
-enum KeyMatchingState {
+enum MatchMachineState {
   NoMatch,
   StartedMatch,
   RetainedMatch,
@@ -334,21 +334,20 @@ enum KeyMatchingState {
   SuccessMatch,
   InvalidMatch,
 }
-
-class KeyMatcher implements StateMachine<KeyPress, KeyMatchingState> {
+class MatchMachine implements StateMachine<KeyPress, MatchMachineState> {
   private readonly trie: Trie<KeyMap>;
-  private currentState: KeyMatchingState;
+  private currentState: MatchMachineState;
   private currentSequence: KeyPress[];
   private currentMatches: KeyMap[];
 
   constructor(trie: Trie<KeyMap>) {
     this.trie = trie;
-    this.currentState = KeyMatchingState.NoMatch;
+    this.currentState = MatchMachineState.NoMatch;
     this.currentSequence = [];
     this.currentMatches = [];
   }
 
-  public advance(keypress: KeyPress): KeyMatchingState {
+  public advance(keypress: KeyPress): MatchMachineState {
     this.currentSequence.push(keypress);
     const bestMatch = this.trie.bestMatch(this.currentSequence);
     const matchClassification = this.classify( bestMatch)
@@ -356,39 +355,39 @@ class KeyMatcher implements StateMachine<KeyPress, KeyMatchingState> {
 
     switch (this.currentState) {
       // Start Matching
-      case KeyMatchingState.NoMatch:
+      case MatchMachineState.NoMatch:
         if ( matchClassification === MatchClassification.NoMatch) {
           this.reset();
-          this.currentState = KeyMatchingState.NoMatch;
+          this.currentState = MatchMachineState.NoMatch;
         }
         else if ( matchClassification === MatchClassification.FullMatch) {
-          this.currentState = KeyMatchingState.SuccessMatch;
+          this.currentState = MatchMachineState.SuccessMatch;
         }
         else {
-          this.currentState = KeyMatchingState.StartedMatch;
+          this.currentState = MatchMachineState.StartedMatch;
         }
         return this.currentState;
       // Continue / Finish Matching
-      case KeyMatchingState.StartedMatch:
-      case KeyMatchingState.RetainedMatch:
-      case KeyMatchingState.ImprovedMatch:
+      case MatchMachineState.StartedMatch:
+      case MatchMachineState.RetainedMatch:
+      case MatchMachineState.ImprovedMatch:
           if ( keypress.classification() === KeyClassification.NoKey) {
             this.currentSequence.pop();
-            this.currentState = KeyMatchingState.RetainedMatch;
+            this.currentState = MatchMachineState.RetainedMatch;
           }
           else if ( matchClassification === MatchClassification.NoMatch ) {
-            this.currentState = KeyMatchingState.InvalidMatch;
+            this.currentState = MatchMachineState.InvalidMatch;
           }
           else if ( matchClassification === MatchClassification.FullMatch) {
-            this.currentState = KeyMatchingState.SuccessMatch;
+            this.currentState = MatchMachineState.SuccessMatch;
           }
           else {
-            this.currentState = KeyMatchingState.ImprovedMatch;
+            this.currentState = MatchMachineState.ImprovedMatch;
           }
           return this.currentState;
       // Clear previous matching and rematch
-      case KeyMatchingState.SuccessMatch:
-      case KeyMatchingState.InvalidMatch:
+      case MatchMachineState.SuccessMatch:
+      case MatchMachineState.InvalidMatch:
         this.reset();
         return this.advance(keypress);
     }
@@ -400,7 +399,7 @@ class KeyMatcher implements StateMachine<KeyPress, KeyMatchingState> {
 
   public fullMatch(): Optional<KeyMap> {
     const numMatches = this.allMatches().length;
-    const isFullMatch = this.currentState === KeyMatchingState.SuccessMatch;
+    const isFullMatch = this.currentState === MatchMachineState.SuccessMatch;
 
     // Sanity checking.
     if (isFullMatch && numMatches !== 1) {
@@ -417,7 +416,7 @@ class KeyMatcher implements StateMachine<KeyPress, KeyMatchingState> {
   }
 
   private reset(): void {
-    this.currentState = KeyMatchingState.NoMatch;
+    this.currentState = MatchMachineState.NoMatch;
     this.currentSequence = [];
     this.currentMatches = [];
   }
@@ -438,7 +437,7 @@ class KeyMatcher implements StateMachine<KeyPress, KeyMatchingState> {
 export default class LeaderHotkeysPlugin extends Plugin {
   public settings: SavedSettings;
   private trie: Trie<KeyMap>;
-  private matcher: KeyMatcher;
+  private matcher: MatchMachine;
 
   public async onload(): Promise<void> {
     writeConsole('Started Loading.');
@@ -461,13 +460,13 @@ export default class LeaderHotkeysPlugin extends Plugin {
 
     const currentState = this.matcher.advance(keypress);
     switch (currentState) {
-      case KeyMatchingState.NoMatch:
+      case MatchMachineState.NoMatch:
         writeConsole(
           'An keypress resulted in a NoMatch state. Letting this event pass.',
         );
         return;
 
-      case KeyMatchingState.InvalidMatch:
+      case MatchMachineState.InvalidMatch:
         {
           event.preventDefault();
           writeConsole(
@@ -476,7 +475,7 @@ export default class LeaderHotkeysPlugin extends Plugin {
         }
         return;
 
-      case KeyMatchingState.StartedMatch:
+      case MatchMachineState.StartedMatch:
         {
           event.preventDefault();
           writeConsole(
@@ -485,7 +484,7 @@ export default class LeaderHotkeysPlugin extends Plugin {
         }
         return;
 
-      case KeyMatchingState.RetainedMatch:
+      case MatchMachineState.RetainedMatch:
         {
           event.preventDefault();
           writeConsole(
@@ -494,7 +493,7 @@ export default class LeaderHotkeysPlugin extends Plugin {
         }
         return;
 
-      case KeyMatchingState.ImprovedMatch:
+      case MatchMachineState.ImprovedMatch:
         {
           event.preventDefault();
           writeConsole(
@@ -503,7 +502,7 @@ export default class LeaderHotkeysPlugin extends Plugin {
         }
         return;
 
-      case KeyMatchingState.SuccessMatch:
+      case MatchMachineState.SuccessMatch:
         {
           event.preventDefault();
           writeConsole(
@@ -537,7 +536,7 @@ export default class LeaderHotkeysPlugin extends Plugin {
       writeConsole('Adding keymap ' + keymap.repr());
       this.trie.add(keymap);
     }
-    this.matcher = new KeyMatcher(this.trie);
+    this.matcher = new MatchMachine(this.trie);
   }
 
   private async _registerWorkspaceEvents(): Promise<void> {
@@ -582,7 +581,7 @@ export default class LeaderHotkeysPlugin extends Plugin {
 
 // region Registering of new keymaps
 
-enum KeyRegisterState {
+enum RegisterMachineState {
   NoKeys,
   FirstKey,
   AddedKeys,
@@ -591,61 +590,60 @@ enum KeyRegisterState {
   PendingConfirmation,
   FinishedRegistering,
 }
-
-class RegisterMachine implements StateMachine<KeyPress, KeyRegisterState> {
-  private currentState: KeyRegisterState;
+class RegisterMachine implements StateMachine<KeyPress, RegisterMachineState> {
+  private currentState: RegisterMachineState;
   private currentSequence: KeyPress[];
 
   constructor() {
-    this.currentState = KeyRegisterState.NoKeys;
+    this.currentState = RegisterMachineState.NoKeys;
     this.currentSequence = [];
   }
 
-  public advance(event: KeyPress): KeyRegisterState {
+  public advance(event: KeyPress): RegisterMachineState {
     this.currentSequence.push(event);
     const classification = event.classification();
 
     switch (this.currentState) {
-      case KeyRegisterState.NoKeys:
+      case RegisterMachineState.NoKeys:
         if (classification === KeyClassification.NoKey) {
           this.currentSequence.pop();
-          this.currentState = KeyRegisterState.RetainedKeys;
+          this.currentState = RegisterMachineState.RetainedKeys;
         } else if (classification === KeyClassification.SpecialKey) {
-          this.currentState = KeyRegisterState.PendingConfirmation;
+          this.currentState = RegisterMachineState.PendingConfirmation;
         } else {
-          this.currentState = KeyRegisterState.FirstKey;
+          this.currentState = RegisterMachineState.FirstKey;
         }
         return this.currentState;
 
-      case KeyRegisterState.FirstKey:
-      case KeyRegisterState.RetainedKeys:
-      case KeyRegisterState.BacktrackedKey:
-      case KeyRegisterState.AddedKeys:
+      case RegisterMachineState.FirstKey:
+      case RegisterMachineState.RetainedKeys:
+      case RegisterMachineState.BacktrackedKey:
+      case RegisterMachineState.AddedKeys:
         if (classification === KeyClassification.NoKey) {
           this.currentSequence.pop();
-          this.currentState = KeyRegisterState.RetainedKeys;
+          this.currentState = RegisterMachineState.RetainedKeys;
         } else if (classification === KeyClassification.SpecialKey) {
-          this.currentState = KeyRegisterState.PendingConfirmation;
+          this.currentState = RegisterMachineState.PendingConfirmation;
         } else {
-          this.currentState = KeyRegisterState.AddedKeys;
+          this.currentState = RegisterMachineState.AddedKeys;
         }
         return this.currentState;
 
-      case KeyRegisterState.PendingConfirmation:
+      case RegisterMachineState.PendingConfirmation:
         if (event.key === 'Enter' && event.ctrl && event.alt) {
           this.currentSequence.pop();
-          this.currentState = KeyRegisterState.FinishedRegistering;
+          this.currentState = RegisterMachineState.FinishedRegistering;
         } else if (event.key === 'Enter') {
-          this.currentState = KeyRegisterState.AddedKeys;
+          this.currentState = RegisterMachineState.AddedKeys;
         } else if (event.key === 'Backspace') {
           this.currentSequence.pop();
-          this.currentState = KeyRegisterState.BacktrackedKey;
+          this.currentState = RegisterMachineState.BacktrackedKey;
         } else {
-          this.currentState = KeyRegisterState.PendingConfirmation;
+          this.currentState = RegisterMachineState.PendingConfirmation;
         }
         return this.currentState;
 
-      case KeyRegisterState.FinishedRegistering: {
+      case RegisterMachineState.FinishedRegistering: {
         this.reset();
         return this.advance(event);
       }
@@ -663,7 +661,7 @@ class RegisterMachine implements StateMachine<KeyPress, KeyRegisterState> {
   }
 
   private reset(): void {
-    this.currentState = KeyRegisterState.NoKeys;
+    this.currentState = RegisterMachineState.NoKeys;
     this.currentSequence = [];
   }
 }
@@ -711,20 +709,20 @@ class SetHotkeyModal extends Modal {
     const registerState = this.keyRegister.advance(keyPress);
 
     switch (registerState) {
-      case KeyRegisterState.NoKeys:
+      case RegisterMachineState.NoKeys:
         writeConsole('An keypress resulted in a NoKeys state. ');
         event.preventDefault();
         this.setText('Waiting for keypress');
         return;
 
-      case KeyRegisterState.RetainedKeys:
+      case RegisterMachineState.RetainedKeys:
         writeConsole(
           'An keypress resulted in a RetainedKeys state. Awaiting further keypresses.',
         );
         event.preventDefault();
         return;
 
-      case KeyRegisterState.FirstKey:
+      case RegisterMachineState.FirstKey:
         event.preventDefault();
         writeConsole(
           'An keypress resulted in a FirstKey state. Awaiting further keypresses.',
@@ -732,7 +730,7 @@ class SetHotkeyModal extends Modal {
         this.setText(this.keyRegister.representation());
         return;
 
-      case KeyRegisterState.BacktrackedKey:
+      case RegisterMachineState.BacktrackedKey:
         event.preventDefault();
         writeConsole(
           'An keypress resulted in a BacktrackedKey state. Awaiting further keypresses.',
@@ -740,7 +738,7 @@ class SetHotkeyModal extends Modal {
         this.setText(this.keyRegister.representation());
         return;
 
-      case KeyRegisterState.AddedKeys:
+      case RegisterMachineState.AddedKeys:
         event.preventDefault();
         writeConsole(
           'An keypress resulted in a AddedKeys state. Awaiting further keypresses.',
@@ -748,7 +746,7 @@ class SetHotkeyModal extends Modal {
         this.setText(this.keyRegister.representation());
         return;
 
-      case KeyRegisterState.PendingConfirmation:
+      case RegisterMachineState.PendingConfirmation:
         event.preventDefault();
         {
           writeConsole(
@@ -770,7 +768,7 @@ class SetHotkeyModal extends Modal {
         }
         return;
 
-      case KeyRegisterState.FinishedRegistering:
+      case RegisterMachineState.FinishedRegistering:
         event.preventDefault();
         writeConsole('An keypress resulted in a FinishedRegistering state.');
         const conflict = this.existingSettingsConflict(

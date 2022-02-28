@@ -192,6 +192,7 @@ class KeyPress implements Hashable {
 		const meta  = binding.modifiers.contains( 'Meta' );
 		return new KeyPress( key, shift, ctrl, alt, meta );
 	}
+
 	// endregion
 
 	public readonly key: string;
@@ -214,7 +215,7 @@ class KeyPress implements Hashable {
 		const ctrlRepr  = this.ctrl ? 'Ctrl + ' : '';
 		const shiftRepr = this.shift ? '⇧ + ' : '';
 
-		return metaRepr +  ctrlRepr +  altRepr +  shiftRepr + this.key
+		return metaRepr + ctrlRepr + altRepr + shiftRepr + this.key
 	}
 
 	public serialize(): string {
@@ -265,7 +266,7 @@ interface StateMachine<K, T> {
 	advance: ( event: K ) => T
 }
 
-enum MatchingKeyMap {
+enum KeyMatchingState {
 	NoMatch,
 	StartedMatch,
 	RetainedMatch,
@@ -274,45 +275,45 @@ enum MatchingKeyMap {
 	InvalidMatch,
 }
 
-class KeyMatcher implements StateMachine<KeyPress, MatchingKeyMap> {
+class KeyMatcher implements StateMachine<KeyPress, KeyMatchingState> {
 	private readonly trie: Trie<KeyMap>;
-	private currentState: MatchingKeyMap;
+	private currentState: KeyMatchingState;
 	private currentSequence: KeyPress[];
 	private currentMatches: KeyMap[];
 
 	constructor( hotkeys: KeyMap[] ) {
 		this.trie            = new Trie( hotkeys );
-		this.currentState    = MatchingKeyMap.NoMatch;
+		this.currentState    = KeyMatchingState.NoMatch;
 		this.currentSequence = [];
 		this.currentMatches  = [];
 	}
 
-	public advance( keypress: KeyPress ): MatchingKeyMap {
+	public advance( keypress: KeyPress ): KeyMatchingState {
 		this.currentSequence.push( keypress );
 
 		switch ( this.currentState ) {
 			// Start Matching
-			case MatchingKeyMap.NoMatch: {
+			case KeyMatchingState.NoMatch: {
 				const bestMatch     = this.trie.bestMatch( this.currentSequence );
 				this.currentMatches = bestMatch ? bestMatch.leafValues() : [];
 				// No Match Logic
 				if ( !bestMatch ) {
 					this.reset();
-					this.currentState = MatchingKeyMap.NoMatch;
+					this.currentState = KeyMatchingState.NoMatch;
 				} else if ( bestMatch.isLeaf() ) {
-					this.currentState = MatchingKeyMap.SuccessMatch;
+					this.currentState = KeyMatchingState.SuccessMatch;
 				} else {
-					this.currentState = MatchingKeyMap.StartedMatch;
+					this.currentState = KeyMatchingState.StartedMatch;
 				}
 			}
 				return this.currentState;
 			// Continue / Finish Matching
-			case MatchingKeyMap.StartedMatch:
-			case MatchingKeyMap.RetainedMatch:
-			case MatchingKeyMap.ImprovedMatch:
+			case KeyMatchingState.StartedMatch:
+			case KeyMatchingState.RetainedMatch:
+			case KeyMatchingState.ImprovedMatch:
 				if ( !keypress.containsKey() ) {
 					this.currentSequence.pop();
-					this.currentState = MatchingKeyMap.RetainedMatch;
+					this.currentState = KeyMatchingState.RetainedMatch;
 					return this.currentState;
 				}
 			{
@@ -320,17 +321,17 @@ class KeyMatcher implements StateMachine<KeyPress, MatchingKeyMap> {
 				this.currentMatches = bestMatch ? bestMatch.leafValues() : [];
 
 				if ( !bestMatch ) {
-					this.currentState = MatchingKeyMap.InvalidMatch;
+					this.currentState = KeyMatchingState.InvalidMatch;
 				} else if ( bestMatch.isLeaf() ) {
-					this.currentState = MatchingKeyMap.SuccessMatch;
+					this.currentState = KeyMatchingState.SuccessMatch;
 				} else {
-					this.currentState = MatchingKeyMap.ImprovedMatch;
+					this.currentState = KeyMatchingState.ImprovedMatch;
 				}
 			}
 				return this.currentState;
 			// Clear previous matching and rematch
-			case MatchingKeyMap.SuccessMatch:
-			case MatchingKeyMap.InvalidMatch:
+			case KeyMatchingState.SuccessMatch:
+			case KeyMatchingState.InvalidMatch:
 				this.reset();
 				return this.advance( keypress );
 		}
@@ -341,25 +342,25 @@ class KeyMatcher implements StateMachine<KeyPress, MatchingKeyMap> {
 	}
 
 	public fullMatch(): Optional<KeyMap> {
-		const availableCommandLength = this.allMatches().length;
-		const isFullMatch            = this.currentState === MatchingKeyMap.SuccessMatch;
+		const numMatches  = this.allMatches().length;
+		const isFullMatch = this.currentState === KeyMatchingState.SuccessMatch;
 
 		// Sanity checking.
-		if ( isFullMatch && availableCommandLength !== 1 ) {
+		if ( isFullMatch && numMatches !== 1 ) {
 			writeConsole(
 				'State Machine in FullMatch state, but availableHotkeys.length contains more than 1 element. This is definitely a bug.',
 			);
 			return null;
 		}
 
-		if ( isFullMatch && availableCommandLength === 1 ) {
+		if ( isFullMatch && numMatches === 1 ) {
 			return this.currentMatches[ 0 ];
 		}
 		return null;
 	}
 
 	private reset(): void {
-		this.currentState    = MatchingKeyMap.NoMatch;
+		this.currentState    = KeyMatchingState.NoMatch;
 		this.currentSequence = [];
 		this.currentMatches  = [];
 	}
@@ -393,41 +394,41 @@ export default class LeaderHotkeysPlugin extends Plugin {
 
 		const currentState = this.matcher.advance( keypress );
 		switch ( currentState ) {
-			case MatchingKeyMap.NoMatch:
+			case KeyMatchingState.NoMatch:
 				writeConsole(
 					'An keypress resulted in a NoMatch state. Letting this event pass.',
 				);
 				return;
 
-			case MatchingKeyMap.InvalidMatch:
+			case KeyMatchingState.InvalidMatch:
 				event.preventDefault();
 				writeConsole(
 					'An keypress resulted in a ExitMatch. Exiting matching state.',
 				);
 				return;
 
-			case MatchingKeyMap.StartedMatch:
+			case KeyMatchingState.StartedMatch:
 				event.preventDefault();
 				writeConsole(
 					'An keypress resulted in a LeaderMatch. Entering matching state.',
 				);
 				return;
 
-			case MatchingKeyMap.RetainedMatch:
+			case KeyMatchingState.RetainedMatch:
 				event.preventDefault();
 				writeConsole(
 					'An keypress resulted in a RetainedMatch. Retaining matching state.',
 				);
 				return;
 
-			case MatchingKeyMap.ImprovedMatch:
+			case KeyMatchingState.ImprovedMatch:
 				event.preventDefault();
 				writeConsole(
 					'An keypress resulted in a ImprovedMatch. Waiting for the rest of the key sequence.',
 				);
 				return;
 
-			case MatchingKeyMap.SuccessMatch:
+			case KeyMatchingState.SuccessMatch:
 				event.preventDefault();
 				writeConsole(
 					'An keypress resulted in a FullMatch. Dispatching keymap.',

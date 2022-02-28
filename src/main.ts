@@ -1,287 +1,6 @@
 import { App, Modal, Notice, Plugin, PluginSettingTab, Setting, } from 'obsidian';
 
 
-type Optional<T> = T | undefined | null;
-
-// region Trie
-interface Hashable {
-	serialize(): string;
-}
-interface TrieAble extends Iterable<Hashable> {
-}
-
-class TrieNode<T> {
-	public children = new Map<string, TrieNode<T>>();
-	public value: Optional<T>;
-
-	public child( key: string ): Optional<TrieNode<T>> {
-		return this.children.get( key );
-	}
-
-	public addChild( key: string, child: TrieNode<T> ): void {
-		this.children.set( key, child );
-	}
-
-	public leaves(): TrieNode<T>[] {
-
-		if ( this.isLeaf() ){
-			return [ this ];
-		}
-
-
-		let result: TrieNode<T>[] = [];
-
-		this.children.forEach( ( child, key ) => {
-			result = result.concat( child.leaves() );
-		} );
-
-		return result;
-	}
-
-	public leafValues(): T[] {
-		return this.leaves().map( ( node ) => node.value );
-	}
-
-	public isLeaf(): boolean {
-		return this.children.size === 0;
-	}
-
-	public setValue( value: T ): void {
-		this.value = value;
-	}
-}
-
-class Trie<T extends TrieAble> {
-	private readonly root: TrieNode<T>;
-
-	constructor( keymaps: T[] ) {
-		this.root = new TrieNode();
-
-		for ( const keymap of keymaps ) {
-			this.add( keymap )
-		}
-
-	}
-
-	public add( composite: T ): void {
-		let lastSeenNode = this.root;
-		for ( const component of composite ) {
-			const key   = component.serialize();
-			const child = lastSeenNode.child( key ) || new TrieNode();
-			lastSeenNode.addChild( key, child );
-			lastSeenNode = child;
-		}
-		if (lastSeenNode.value !== undefined ){
-			throw new Error( 'Duplicate keymap' );
-		}
-		lastSeenNode.setValue( composite );
-	}
-
-	public bestMatch( sequence: Hashable[] ): Optional<TrieNode<T>> {
-		let lastNode = this.root;
-		for ( const keyPress of sequence ) {
-			const key   = keyPress.serialize();
-			const child = lastNode.child( key );
-			if ( !child ) {
-				return null;
-			}
-			lastNode = child;
-		}
-
-		return lastNode;
-	}
-}
-// endregion
-
-// region Fundamental Domain
-class KeyPress implements Hashable{
-	public static fromEvent( event: KeyboardEvent ): KeyPress {
-		const key   = event.key;
-		const shift = event.shiftKey;
-		const ctrl  = event.ctrlKey;
-		const alt   = event.altKey;
-		const meta  = event.metaKey
-		return new KeyPress( key, shift, alt, ctrl, meta );
-	}
-
-	public static fromCustom( binding: CustomCommand ): KeyPress {
-		console.log( binding );
-		const key   = binding.key
-		const shift = binding.modifiers.contains( 'Shift' );
-		const ctrl  = binding.modifiers.contains( 'Ctrl' );
-		const alt   = binding.modifiers.contains( 'Alt' );
-		const meta  = binding.modifiers.contains( 'Meta' );
-		return new KeyPress( key, shift, ctrl, alt, meta );
-	}
-
-
-	public readonly key: string;
-	public readonly alt: boolean;
-	public readonly ctrl: boolean;
-	public readonly shift: boolean;
-	public readonly meta: boolean;
-
-	public constructor( key: string, shift: boolean, alt: boolean, ctrl: boolean, meta: boolean ) {
-		this.key   = key;
-		this.shift = shift;
-		this.alt   = alt
-		this.ctrl  = ctrl
-		this.meta  = meta;
-	}
-
-	public repr(): string {
-		const metaRepr  = this.meta ? '⌘ + ' : '';
-		const altRepr   = this.alt ? 'Alt + ' : '';
-		const ctrlRepr  = this.ctrl ? 'Ctrl + ' : '';
-		const shiftRepr = this.shift ? '⇧ + ' : '';
-
-		return [ metaRepr, ctrlRepr, altRepr, shiftRepr, this.key ].join( '' );
-	}
-
-	public serialize(): string {
-		// todo possibly use another representation
-		return this.repr();
-	}
-
-	public containsKey(): boolean {
-		return (
-			this.key !== null &&
-			this.key !== undefined &&
-			this.key !== 'Alt' &&
-			this.key !== 'Control' &&
-			this.key !== 'Shift' &&
-			this.key !== 'Meta'
-		);
-	}
-
-}
-
-class KeyMap implements Iterable<KeyPress>{
-	public sequence: KeyPress[];
-	public commandID: string;
-
-	public [ Symbol.iterator ](): Iterator<KeyPress> {
-		return this.sequence.values();
-	}
-}
-
-interface SavedSettings {
-	hotkeys: KeyMap[];
-}
-// endregion
-
-
-// region Workspace Keymap Matching
-
-interface StateMachine< K , T > {
-	// Would love to restrict T to a finite set ( T extends Enum),
-	// but it's not possible to do that in TypeScript
-	advance : ( event: K ) => T
-}
-
-enum MatchingKeyMap  {
-	NoMatch,
-	StartedMatch,
-	RetainedMatch,
-	ImprovedMatch,
-	SuccessMatch,
-	InvalidMatch,
-}
-
-class KeyMatcher implements StateMachine<KeyPress, MatchingKeyMap> {
-	private readonly trie: Trie< KeyMap>;
-	private currentState: MatchingKeyMap;
-	private currentSequence: KeyPress[];
-	private currentMatches: KeyMap[];
-
-	constructor( hotkeys: KeyMap[] ) {
-		this.trie              = new Trie( hotkeys );
-		this.currentState      = MatchingKeyMap.NoMatch;
-		this.currentSequence    = [];
-		this.currentMatches = [];
-	}
-
-	public advance( keypress: KeyPress ): MatchingKeyMap {
-		this.currentSequence.push( keypress );
-
-		switch ( this.currentState ) {
-			// Start Matching
-			case MatchingKeyMap.NoMatch: {
-				const bestMatch        = this.trie.bestMatch( this.currentSequence );
-				this.currentMatches = bestMatch ? bestMatch.leafValues() : [];
-				// No Match Logic
-				if ( !bestMatch ) {
-					this.reset();
-					this.currentState = MatchingKeyMap.NoMatch;
-				} else if ( bestMatch.isLeaf() ) {
-					this.currentState = MatchingKeyMap.SuccessMatch;
-				} else {
-					this.currentState = MatchingKeyMap.StartedMatch;
-				}
-			}
-				return this.currentState;
-			// Continue / Finish Matching
-			case MatchingKeyMap.StartedMatch:
-			case MatchingKeyMap.RetainedMatch:
-			case MatchingKeyMap.ImprovedMatch:
-				if ( !keypress.containsKey() ) {
-					this.currentSequence.pop();
-					this.currentState = MatchingKeyMap.RetainedMatch;
-					return this.currentState;
-				}
-			{
-				const bestMatch        = this.trie.bestMatch( this.currentSequence );
-				this.currentMatches = bestMatch ? bestMatch.leafValues() : [];
-
-				if ( !bestMatch ) {
-					this.currentState = MatchingKeyMap.InvalidMatch;
-				} else if ( bestMatch.isLeaf() ) {
-					this.currentState = MatchingKeyMap.SuccessMatch;
-				} else {
-					this.currentState = MatchingKeyMap.ImprovedMatch;
-				}
-			}
-				return this.currentState;
-			// Clear previous matching and rematch
-			case MatchingKeyMap.SuccessMatch:
-			case MatchingKeyMap.InvalidMatch:
-				this.reset();
-				return this.advance( keypress );
-		}
-	}
-
-	public allMatches(): readonly KeyMap[] {
-		return this.currentMatches;
-	}
-
-	public fullMatch(): Optional<KeyMap> {
-		const availableCommandLength = this.allMatches().length;
-		const isFullMatch            = this.currentState === MatchingKeyMap.SuccessMatch;
-
-		// Sanity checking.
-		if ( isFullMatch && availableCommandLength !== 1 ) {
-			writeConsole(
-				'State Machine in FullMatch state, but availableHotkeys.length contains more than 1 element. This is definitely a bug.',
-			);
-			return null;
-		}
-
-		if ( isFullMatch && availableCommandLength === 1 ) {
-			return this.currentMatches[ 0 ];
-		}
-		return null;
-	}
-
-	private reset(): void {
-		this.currentState      = MatchingKeyMap.NoMatch;
-		this.currentSequence    = [];
-		this.currentMatches = [];
-	}
-}
-// endregion
-
-
-
 // region Obsidian Type Shim
 interface ObsidianCommand {
 	callback: () => void
@@ -332,9 +51,326 @@ interface CustomCommand {
 
 // endregion
 
+// region General Type Shim
+type Optional<T> = T | undefined | null;
+// endregion
+
+// region Trie
+interface Hashable {
+	serialize(): string;
+}
+
+interface TrieAble extends Iterable<Hashable> {
+}
+
+class TrieNode<T> {
+	public children = new Map<string, TrieNode<T>>();
+	public value: Optional<T>;
+
+	public child( key: string ): Optional<TrieNode<T>> {
+		return this.children.get( key );
+	}
+
+	public addChild( key: string, child: TrieNode<T> ): void {
+		this.children.set( key, child );
+	}
+
+	public leaves(): TrieNode<T>[] {
+
+		if ( this.isLeaf() ) {
+			return [ this ];
+		}
+
+
+		let result: TrieNode<T>[] = [];
+
+		this.children.forEach( ( child, key ) => {
+			result = result.concat( child.leaves() );
+		} );
+
+		return result;
+	}
+
+	public leafValues(): T[] {
+		return this.leaves().map( ( node ) => node.value );
+	}
+
+	public isLeaf(): boolean {
+		return this.children.size === 0;
+	}
+
+	public setValue( value: T ): void {
+		this.value = value;
+	}
+}
+
+class Trie<T extends TrieAble> {
+	private readonly root: TrieNode<T>;
+
+	constructor( keymaps: T[] ) {
+		this.root = new TrieNode();
+
+		for ( const keymap of keymaps ) {
+			this.add( keymap )
+		}
+
+	}
+
+	public add( composite: T ): void {
+		let lastSeenNode = this.root;
+		for ( const component of composite ) {
+			const key   = component.serialize();
+			const child = lastSeenNode.child( key ) || new TrieNode();
+			lastSeenNode.addChild( key, child );
+			lastSeenNode = child;
+		}
+		if ( lastSeenNode.value !== undefined ) {
+			throw new Error( 'Duplicate keymap' );
+		}
+		lastSeenNode.setValue( composite );
+	}
+
+	public bestMatch( sequence: Hashable[] ): Optional<TrieNode<T>> {
+		let lastNode = this.root;
+		for ( const keyPress of sequence ) {
+			const key   = keyPress.serialize();
+			const child = lastNode.child( key );
+			if ( !child ) {
+				return null;
+			}
+			lastNode = child;
+		}
+
+		return lastNode;
+	}
+}
+
+// endregion
+
+// region Fundamental Domain
+class KeyPress implements Hashable {
+
+	// region static constructors
+	public static ctrl( key: string ): KeyPress {
+		return new KeyPress( key, false, false, true, false );
+	}
+
+	public static alt( key: string ): KeyPress {
+		return new KeyPress( key, false, true, false, false );
+	}
+
+	public static shift( key: string ): KeyPress {
+		return new KeyPress( key, true, false, false, false );
+	}
+
+	public static meta( key: string ): KeyPress {
+		return new KeyPress( key, false, false, false, true );
+	}
+
+	public static just( key: string ): KeyPress {
+		return new KeyPress( key, false, false, false, false );
+	}
+
+	public static ctrlAlt( key: string ): KeyPress {
+		return new KeyPress( key, false, true, true, false );
+	}
+
+	public static fromEvent( event: KeyboardEvent ): KeyPress {
+		const key   = event.key;
+		const shift = event.shiftKey;
+		const ctrl  = event.ctrlKey;
+		const alt   = event.altKey;
+		const meta  = event.metaKey
+		return new KeyPress( key, shift, alt, ctrl, meta );
+	}
+
+	public static fromCustom( binding: CustomCommand ): KeyPress {
+		const key   = binding.key
+		const shift = binding.modifiers.contains( 'Shift' );
+		const ctrl  = binding.modifiers.contains( 'Ctrl' );
+		const alt   = binding.modifiers.contains( 'Alt' );
+		const meta  = binding.modifiers.contains( 'Meta' );
+		return new KeyPress( key, shift, ctrl, alt, meta );
+	}
+	// endregion
+
+	public readonly key: string;
+	public readonly alt: boolean;
+	public readonly ctrl: boolean;
+	public readonly shift: boolean;
+	public readonly meta: boolean;
+
+	public constructor( key: string, shift: boolean, alt: boolean, ctrl: boolean, meta: boolean ) {
+		this.key   = key;
+		this.shift = shift;
+		this.alt   = alt
+		this.ctrl  = ctrl
+		this.meta  = meta;
+	}
+
+	public repr(): string {
+		const metaRepr  = this.meta ? '⌘ + ' : '';
+		const altRepr   = this.alt ? 'Alt + ' : '';
+		const ctrlRepr  = this.ctrl ? 'Ctrl + ' : '';
+		const shiftRepr = this.shift ? '⇧ + ' : '';
+
+		return metaRepr +  ctrlRepr +  altRepr +  shiftRepr + this.key
+	}
+
+	public serialize(): string {
+		// todo possibly use another representation
+		return this.repr();
+	}
+
+	public containsKey(): boolean {
+		return (
+			this.key !== null &&
+			this.key !== undefined &&
+			this.key !== 'Alt' &&
+			this.key !== 'Control' &&
+			this.key !== 'Shift' &&
+			this.key !== 'Meta'
+		);
+	}
+
+}
+
+class KeyMap implements Iterable<KeyPress> {
+	public sequence: KeyPress[];
+	public commandID: string;
+
+	constructor( commandID: string, sequence: KeyPress[] ) {
+		this.sequence  = sequence;
+		this.commandID = commandID;
+	}
+
+	public [ Symbol.iterator ](): Iterator<KeyPress> {
+		return this.sequence.values();
+	}
+
+}
+
+interface SavedSettings {
+	hotkeys: KeyMap[];
+}
+
+// endregion
+
+
+// region Workspace Keymap Matching
+
+interface StateMachine<K, T> {
+	// Would love to restrict T to a finite set ( T extends Enum),
+	// but it's not possible to do that in TypeScript
+	advance: ( event: K ) => T
+}
+
+enum MatchingKeyMap {
+	NoMatch,
+	StartedMatch,
+	RetainedMatch,
+	ImprovedMatch,
+	SuccessMatch,
+	InvalidMatch,
+}
+
+class KeyMatcher implements StateMachine<KeyPress, MatchingKeyMap> {
+	private readonly trie: Trie<KeyMap>;
+	private currentState: MatchingKeyMap;
+	private currentSequence: KeyPress[];
+	private currentMatches: KeyMap[];
+
+	constructor( hotkeys: KeyMap[] ) {
+		this.trie            = new Trie( hotkeys );
+		this.currentState    = MatchingKeyMap.NoMatch;
+		this.currentSequence = [];
+		this.currentMatches  = [];
+	}
+
+	public advance( keypress: KeyPress ): MatchingKeyMap {
+		this.currentSequence.push( keypress );
+
+		switch ( this.currentState ) {
+			// Start Matching
+			case MatchingKeyMap.NoMatch: {
+				const bestMatch     = this.trie.bestMatch( this.currentSequence );
+				this.currentMatches = bestMatch ? bestMatch.leafValues() : [];
+				// No Match Logic
+				if ( !bestMatch ) {
+					this.reset();
+					this.currentState = MatchingKeyMap.NoMatch;
+				} else if ( bestMatch.isLeaf() ) {
+					this.currentState = MatchingKeyMap.SuccessMatch;
+				} else {
+					this.currentState = MatchingKeyMap.StartedMatch;
+				}
+			}
+				return this.currentState;
+			// Continue / Finish Matching
+			case MatchingKeyMap.StartedMatch:
+			case MatchingKeyMap.RetainedMatch:
+			case MatchingKeyMap.ImprovedMatch:
+				if ( !keypress.containsKey() ) {
+					this.currentSequence.pop();
+					this.currentState = MatchingKeyMap.RetainedMatch;
+					return this.currentState;
+				}
+			{
+				const bestMatch     = this.trie.bestMatch( this.currentSequence );
+				this.currentMatches = bestMatch ? bestMatch.leafValues() : [];
+
+				if ( !bestMatch ) {
+					this.currentState = MatchingKeyMap.InvalidMatch;
+				} else if ( bestMatch.isLeaf() ) {
+					this.currentState = MatchingKeyMap.SuccessMatch;
+				} else {
+					this.currentState = MatchingKeyMap.ImprovedMatch;
+				}
+			}
+				return this.currentState;
+			// Clear previous matching and rematch
+			case MatchingKeyMap.SuccessMatch:
+			case MatchingKeyMap.InvalidMatch:
+				this.reset();
+				return this.advance( keypress );
+		}
+	}
+
+	public allMatches(): readonly KeyMap[] {
+		return this.currentMatches;
+	}
+
+	public fullMatch(): Optional<KeyMap> {
+		const availableCommandLength = this.allMatches().length;
+		const isFullMatch            = this.currentState === MatchingKeyMap.SuccessMatch;
+
+		// Sanity checking.
+		if ( isFullMatch && availableCommandLength !== 1 ) {
+			writeConsole(
+				'State Machine in FullMatch state, but availableHotkeys.length contains more than 1 element. This is definitely a bug.',
+			);
+			return null;
+		}
+
+		if ( isFullMatch && availableCommandLength === 1 ) {
+			return this.currentMatches[ 0 ];
+		}
+		return null;
+	}
+
+	private reset(): void {
+		this.currentState    = MatchingKeyMap.NoMatch;
+		this.currentSequence = [];
+		this.currentMatches  = [];
+	}
+}
+
+// endregion
+
+
 export default class LeaderHotkeysPlugin extends Plugin {
 	public settings: SavedSettings;
-	private state: KeyMatcher;
+	private matcher: KeyMatcher;
 
 	public async onload(): Promise<void> {
 		writeConsole( 'Started Loading.' );
@@ -352,10 +388,10 @@ export default class LeaderHotkeysPlugin extends Plugin {
 	}
 
 	private readonly handleKeyDown = ( event: KeyboardEvent ): void => {
-		console.log( event );
+
 		const keypress = KeyPress.fromEvent( event );
-		console.log( keypress );
-		const currentState = this.state.advance( keypress );
+
+		const currentState = this.matcher.advance( keypress );
 		switch ( currentState ) {
 			case MatchingKeyMap.NoMatch:
 				writeConsole(
@@ -377,10 +413,17 @@ export default class LeaderHotkeysPlugin extends Plugin {
 				);
 				return;
 
+			case MatchingKeyMap.RetainedMatch:
+				event.preventDefault();
+				writeConsole(
+					'An keypress resulted in a RetainedMatch. Retaining matching state.',
+				);
+				return;
+
 			case MatchingKeyMap.ImprovedMatch:
 				event.preventDefault();
 				writeConsole(
-					'An keypress resulted in a ParialMatch. Waiting for the rest of the key sequence.',
+					'An keypress resulted in a ImprovedMatch. Waiting for the rest of the key sequence.',
 				);
 				return;
 
@@ -389,15 +432,9 @@ export default class LeaderHotkeysPlugin extends Plugin {
 				writeConsole(
 					'An keypress resulted in a FullMatch. Dispatching keymap.',
 				);
-				const keymap = this.state.fullMatch();
-				if ( keymap ) {
-					const app = this.app as any;
-					app.commands.executeCommandById( keymap.commandID );
-				} else {
-					writeConsole(
-						'No keymap found for the full match. This is definitely a bug.',
-					);
-				}
+
+				const keymap = this.matcher.fullMatch();
+				this.invoke( keymap )
 				return;
 		}
 	};
@@ -416,7 +453,7 @@ export default class LeaderHotkeysPlugin extends Plugin {
 		}
 
 		this.settings = savedSettings || defaultSettings;
-		this.state    = new KeyMatcher( this.settings.hotkeys );
+		this.matcher  = new KeyMatcher( this.settings.hotkeys );
 	}
 
 	private async _registerWorkspaceEvents(): Promise<void> {
@@ -445,6 +482,17 @@ export default class LeaderHotkeysPlugin extends Plugin {
 		const leaderPluginSettingsTab = new LeaderPluginSettingsTab( this.app, this );
 		this.addSettingTab( leaderPluginSettingsTab );
 		writeConsole( 'Registered Setting Tab.' );
+	}
+
+	private invoke( keymap: Optional<KeyMap> ): void {
+		if ( keymap ) {
+			const app = this.app as any;
+			app.commands.executeCommandById( keymap.commandID );
+		} else {
+			writeConsole(
+				'No keymap found for the full match. This is definitely a bug.',
+			);
+		}
 	}
 }
 
@@ -503,9 +551,9 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
 
 	private static readonly listCommands = ( app: App, query?: string ): ObsidianCommand[] => {
 
-		const anyApp                  = app as any
+		const anyApp               = app as any
 		const commands: CommandMap = anyApp.commands.commands;
-		let result                    = Object.values( commands )
+		let result                 = Object.values( commands )
 
 		if ( query ) {
 			result = result.filter( command => command.name.toLowerCase().includes( query.toLowerCase() ) )
@@ -803,38 +851,27 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
 
 }
 
-const defaultHotkeys: KeyMap[] = [
-	{
-		sequence:  [ new KeyPress( 'b', false, false, true, false ),
-					 new KeyPress( 'h', false, false, false, false ) ],
-		commandID: 'editor:focus-left',
-	},
-	{
-		sequence:  [ new KeyPress( 'b', false, false, true, false ),
-					 new KeyPress( 'j', false, false, false, false ) ],
-		commandID: 'editor:focus-bottom',
-	},
-	{
-		sequence:  [ new KeyPress( 'b', false, false, true, false ),
-					 new KeyPress( 'k', false, false, false, false ) ],
-		commandID: 'editor:focus-top',
-	},
-	{
-		sequence:  [ new KeyPress( 'b', false, false, true, false ),
-					 new KeyPress( 'l', false, false, false, false ) ],
-		commandID: 'editor:focus-right',
-	},
-	{
-		sequence:  [
-			new KeyPress( 'q', false, false, true, false ),
-			new KeyPress( '1', false, false, false, false ),
-			new KeyPress( '2', false, false, false, false ),
-			new KeyPress( '2', false, false, false, false ),
-		],
-		commandID: 'command-palette:open',
-	},
+const defaultHotkeys: KeyMap[]       = [
+	new KeyMap( 'editor:focus-left',
+				[ KeyPress.ctrl( 'b' ), KeyPress.just( 'h' )
+				] ),
+	new KeyMap( 'editor:focus-right', [
+		KeyPress.ctrl( 'b' ), KeyPress.just( 'l' ),
+	] ),
+	new KeyMap( 'editor:focus-top', [
+		KeyPress.ctrl( 'b' ), KeyPress.just( 'k' )
+	] ),
+	new KeyMap( 'editor:focus-bottom', [
+		KeyPress.ctrl( 'b' ), KeyPress.just( 'j' )
+	] ),
+	new KeyMap( 'command-palette:open', [
+		KeyPress.ctrl( 'b' ),
+		KeyPress.just( '1' ),
+		KeyPress.just( '2' ),
+		KeyPress.just( '2' )
+	] )
 ];
-const defaultSettings: SavedSettings      = {
+const defaultSettings: SavedSettings = {
 	hotkeys: defaultHotkeys,
 };
 

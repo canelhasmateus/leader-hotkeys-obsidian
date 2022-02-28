@@ -158,7 +158,7 @@ class Trie<T extends HashIter> {
 // endregion
 
 // region Fundamental Domain
-enum KeyClassification {
+enum PressType {
   NoKey,
   SpecialKey,
   NormalKey,
@@ -265,7 +265,7 @@ class KeyPress implements Hashable {
     );
   }
 
-  public classification(): KeyClassification {
+  public classification(): PressType {
     if (
       this.key === null ||
       this.key === undefined ||
@@ -274,14 +274,14 @@ class KeyPress implements Hashable {
       this.key === 'Shift' ||
       this.key === 'Meta'
     ) {
-      return KeyClassification.NoKey;
+      return PressType.NoKey;
     }
 
     if (this.key === 'Enter' || this.key === 'Escape') {
-      return KeyClassification.SpecialKey;
+      return PressType.SpecialKey;
     }
 
-    return KeyClassification.NormalKey;
+    return PressType.NormalKey;
   }
 }
 
@@ -321,7 +321,7 @@ interface SavedSettings {
 
 // region Matching of existing keymaps
 
-enum MatchClassification {
+enum MatchType {
   NoMatch,
   PartialMatch,
   FullMatch,
@@ -350,17 +350,18 @@ class MatchMachine implements StateMachine<KeyPress, MatchMachineState> {
   public advance(keypress: KeyPress): MatchMachineState {
     this.currentSequence.push(keypress);
     const bestMatch = this.trie.bestMatch(this.currentSequence);
-    const matchClassification = this.classify( bestMatch)
+    const matchType = this.classify( bestMatch)
     this.currentMatches = bestMatch ? bestMatch.leafValues() : [];
 
     switch (this.currentState) {
       // Start Matching
       case MatchMachineState.NoMatch:
-        if ( matchClassification === MatchClassification.NoMatch) {
-          this.reset();
+        if ( matchType === MatchType.NoMatch) {
+          this.currentSequence.pop()
           this.currentState = MatchMachineState.NoMatch;
         }
-        else if ( matchClassification === MatchClassification.FullMatch) {
+        else if ( matchType === MatchType.FullMatch) {
+          // Suspicious to have a full match here.
           this.currentState = MatchMachineState.SuccessMatch;
         }
         else {
@@ -371,14 +372,14 @@ class MatchMachine implements StateMachine<KeyPress, MatchMachineState> {
       case MatchMachineState.StartedMatch:
       case MatchMachineState.RetainedMatch:
       case MatchMachineState.ImprovedMatch:
-          if ( keypress.classification() === KeyClassification.NoKey) {
+          if ( keypress.classification() === PressType.NoKey) {
             this.currentSequence.pop();
             this.currentState = MatchMachineState.RetainedMatch;
           }
-          else if ( matchClassification === MatchClassification.NoMatch ) {
+          else if ( matchType === MatchType.NoMatch ) {
             this.currentState = MatchMachineState.InvalidMatch;
           }
-          else if ( matchClassification === MatchClassification.FullMatch) {
+          else if ( matchType === MatchType.FullMatch) {
             this.currentState = MatchMachineState.SuccessMatch;
           }
           else {
@@ -421,20 +422,20 @@ class MatchMachine implements StateMachine<KeyPress, MatchMachineState> {
     this.currentMatches = [];
   }
 
-  private classify( bestMatch: Optional<TrieNode<KeyMap> > ) : MatchClassification {
+  private classify( bestMatch: Optional<TrieNode<KeyMap> > ) : MatchType {
     if (!bestMatch) {
-      return MatchClassification.NoMatch;
+      return MatchType.NoMatch;
     }
     if (bestMatch.isLeaf()) {
-      return MatchClassification.FullMatch;
+      return MatchType.FullMatch;
     }
-    return MatchClassification.PartialMatch;
+    return MatchType.PartialMatch;
   }
 }
 
 // endregion
 
-export default class LeaderHotkeysPlugin extends Plugin {
+export default class LeaderHotkeys extends Plugin {
   public settings: SavedSettings;
   private trie: Trie<KeyMap>;
   private matcher: MatchMachine;
@@ -562,7 +563,7 @@ export default class LeaderHotkeysPlugin extends Plugin {
   private async _registerPeripheralUIElements(): Promise<void> {
     writeConsole('Registering peripheral interface elements.');
 
-    const leaderPluginSettingsTab = new LeaderPluginSettingsTab(this.app, this);
+    const leaderPluginSettingsTab = new LeaderSettingsTab(this.app, this);
     this.addSettingTab(leaderPluginSettingsTab);
     writeConsole('Registered Setting Tab.');
   }
@@ -605,10 +606,10 @@ class RegisterMachine implements StateMachine<KeyPress, RegisterMachineState> {
 
     switch (this.currentState) {
       case RegisterMachineState.NoKeys:
-        if (classification === KeyClassification.NoKey) {
+        if ( classification === PressType.NoKey) {
           this.currentSequence.pop();
           this.currentState = RegisterMachineState.RetainedKeys;
-        } else if (classification === KeyClassification.SpecialKey) {
+        } else if ( classification === PressType.SpecialKey) {
           this.currentState = RegisterMachineState.PendingConfirmation;
         } else {
           this.currentState = RegisterMachineState.FirstKey;
@@ -619,10 +620,10 @@ class RegisterMachine implements StateMachine<KeyPress, RegisterMachineState> {
       case RegisterMachineState.RetainedKeys:
       case RegisterMachineState.BacktrackedKey:
       case RegisterMachineState.AddedKeys:
-        if (classification === KeyClassification.NoKey) {
+        if ( classification === PressType.NoKey) {
           this.currentSequence.pop();
           this.currentState = RegisterMachineState.RetainedKeys;
-        } else if (classification === KeyClassification.SpecialKey) {
+        } else if ( classification === PressType.SpecialKey) {
           this.currentState = RegisterMachineState.PendingConfirmation;
         } else {
           this.currentState = RegisterMachineState.AddedKeys;
@@ -666,26 +667,11 @@ class RegisterMachine implements StateMachine<KeyPress, RegisterMachineState> {
   }
 }
 
-class SetHotkeyModal extends Modal {
+class KeymapRegisterer extends Modal {
   private readonly keyRegister: RegisterMachine;
-  private readonly currentLeader: string;
-  private readonly redraw: () => void;
-  private readonly setNewKey: (
-    key: string,
-    meta: boolean,
-    shift: boolean,
-  ) => void;
 
-  constructor(
-    app: App,
-    currentLeader: string,
-    redraw: () => void,
-    setNewKey: (newKey: string, meta: boolean, shift: boolean) => void,
-  ) {
-    super(app);
-    this.currentLeader = currentLeader;
-    this.redraw = redraw;
-    this.setNewKey = setNewKey;
+  constructor( parent: PluginSettingTab ) {
+    super(parent.app);
     this.keyRegister = new RegisterMachine();
   }
 
@@ -802,7 +788,7 @@ class SetHotkeyModal extends Modal {
 
 // endregion
 
-class LeaderPluginSettingsTab extends PluginSettingTab {
+class LeaderSettingsTab extends PluginSettingTab {
   private static readonly listCommands = (
     app: App,
     query?: string,
@@ -825,19 +811,19 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
 
     return result ? KeyPress.fromCustom(result[0]) : null;
   };
-  private readonly plugin: LeaderHotkeysPlugin;
+  private readonly plugin: LeaderHotkeys;
   private commands: ObsidianCommand[];
 
   private tempNewHotkey: KeyMap;
 
-  constructor(app: App, plugin: LeaderHotkeysPlugin) {
+  constructor(app: App, plugin: LeaderHotkeys) {
     super(app, plugin);
     this.plugin = plugin;
   }
 
   public display(): void {
-    this.commands = LeaderPluginSettingsTab.listCommands(this.app);
-    const currentLeader = LeaderPluginSettingsTab.lookupLeader(this.app);
+    this.commands = LeaderSettingsTab.listCommands(this.app);
+    const currentLeader = LeaderSettingsTab.lookupLeader(this.app);
     const binding = currentLeader
       ? `bound to ${currentLeader.repr()}`
       : 'unbound';
@@ -899,24 +885,7 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
         keySetter.addClass('setting-hotkey');
         keySetter.setText(hotkeyToName(configuredCommand));
         keySetter.addEventListener('click', (e: Event) => {
-          new SetHotkeyModal(
-            this.app,
-            currentLeader.repr(),
-            () => {
-              this.display();
-            },
-            (newKey: string, meta: boolean, shift: boolean) => {
-              const isValid = this.validateNewHotkey(newKey, meta, shift);
-              if (isValid) {
-                this.updateHotkeyInSettings(
-                  configuredCommand,
-                  newKey,
-                  meta,
-                  shift,
-                );
-              }
-            },
-          ).open();
+          new KeymapRegisterer( this ).open();
         });
         settingControl.insertBefore(keySetter, settingControl.children[1]);
 
@@ -957,21 +926,7 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
       keySetter.addClass('setting-hotkey');
       keySetter.setText(hotkeyToName(this.tempNewHotkey));
       keySetter.addEventListener('click', (e: Event) => {
-        new SetHotkeyModal(
-          this.app,
-          currentLeader.repr(),
-          () => {
-            this.display();
-          },
-          (newKey: string, meta: boolean, shift: boolean) => {
-            if (this.tempNewHotkey === undefined) {
-              this.tempNewHotkey = newEmptyHotkey();
-            }
-            this.tempNewHotkey.key = newKey;
-            this.tempNewHotkey.meta = meta;
-            this.tempNewHotkey.shift = shift;
-          },
-        ).open();
+        new KeymapRegisterer( this).open();
       });
       settingControl.insertBefore(keySetter, settingControl.children[1]);
 

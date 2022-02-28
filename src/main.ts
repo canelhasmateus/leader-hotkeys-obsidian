@@ -53,18 +53,23 @@ interface CustomCommand {
 
 // region General Type Shim
 type Optional<T> = T | undefined | null;
-// endregion
-
-// region Trie
 interface Hashable {
 	serialize(): string;
 }
+interface StateMachine<K, T> {
+	// Would love to restrict T to a finite set ( T extends Enum),
+	// but it's not possible to do that in TypeScript
+	advance: ( event: K ) => T
+}
+// endregion
 
-interface TrieAble extends Iterable<Hashable> {
+// region Trie
+interface HashIter extends Iterable<Hashable> {
 }
 
 class TrieNode<T> {
 	public children = new Map<string, TrieNode<T>>();
+
 	public value: Optional<T>;
 
 	public child( key: string ): Optional<TrieNode<T>> {
@@ -72,6 +77,7 @@ class TrieNode<T> {
 	}
 
 	public addChild( key: string, child: TrieNode<T> ): void {
+		this.value = null;
 		this.children.set( key, child );
 	}
 
@@ -104,7 +110,7 @@ class TrieNode<T> {
 	}
 }
 
-class Trie<T extends TrieAble> {
+class Trie<T extends HashIter> {
 	private readonly root: TrieNode<T>;
 
 	constructor( keymaps: T[] ) {
@@ -143,8 +149,12 @@ class Trie<T extends TrieAble> {
 
 		return lastNode;
 	}
-}
 
+	public contains( sequence: Hashable[] ): boolean {
+		return this.bestMatch( sequence ) !== null;
+	}
+
+}
 // endregion
 
 // region Fundamental Domain
@@ -260,14 +270,7 @@ interface SavedSettings {
 
 // endregion
 
-
 // region Workspace Keymap Matching
-
-interface StateMachine<K, T> {
-	// Would love to restrict T to a finite set ( T extends Enum),
-	// but it's not possible to do that in TypeScript
-	advance: ( event: K ) => T
-}
 
 enum KeyMatchingState {
 	NoMatch,
@@ -370,6 +373,7 @@ class KeyMatcher implements StateMachine<KeyPress, KeyMatchingState> {
 }
 
 // endregion
+
 
 
 export default class LeaderHotkeysPlugin extends Plugin {

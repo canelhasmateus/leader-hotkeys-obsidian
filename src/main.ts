@@ -7,7 +7,7 @@ import {
   Setting,
 } from 'obsidian';
 
-// region Obsidian Type Shim
+// region  Type Shims
 interface ObsidianCommand {
   callback: () => void;
   icon: string;
@@ -54,9 +54,7 @@ interface CustomCommand {
   modifiers: string[];
 }
 
-// endregion
-
-// region General Type Shim
+//
 type Optional<T> = T | undefined | null;
 
 interface Hashable {
@@ -240,21 +238,21 @@ class KeyPress implements Hashable {
     this.meta = meta;
   }
 
-  public repr(): string {
+  public readonly repr = (): string => {
     const metaRepr = this.meta ? '⌘ + ' : '';
     const altRepr = this.alt ? 'Alt + ' : '';
     const ctrlRepr = this.ctrl ? 'Ctrl + ' : '';
     const shiftRepr = this.shift ? '⇧ + ' : '';
 
     return metaRepr + ctrlRepr + altRepr + shiftRepr + this.key;
-  }
+  };
 
-  public serialize(): string {
+  public readonly serialize = (): string => {
     // todo possibly use another representation
     return this.repr();
-  }
+  };
 
-  public containsKey(): boolean {
+  public readonly containsKey = (): boolean => {
     return (
       this.key !== null &&
       this.key !== undefined &&
@@ -263,9 +261,9 @@ class KeyPress implements Hashable {
       this.key !== 'Shift' &&
       this.key !== 'Meta'
     );
-  }
+  };
 
-  public classification(): PressType {
+  public readonly classification = (): PressType => {
     if (
       this.key === null ||
       this.key === undefined ||
@@ -282,7 +280,7 @@ class KeyPress implements Hashable {
     }
 
     return PressType.NormalKey;
-  }
+  };
 }
 
 class KeyMap implements Iterable<KeyPress> {
@@ -304,13 +302,13 @@ class KeyMap implements Iterable<KeyPress> {
     return this.sequence.values();
   }
 
-  public repr(): string {
+  public repr = (): string => {
     return (
       this.commandID +
       ' = ' +
       this.sequence.map((key) => key.repr()).join(' => ')
     );
-  }
+  };
 }
 
 interface SavedSettings {
@@ -335,7 +333,7 @@ enum MatchMachineState {
   InvalidMatch,
 }
 class MatchMachine implements StateMachine<KeyPress, MatchMachineState> {
-  private static classify( bestMatch: Optional<TrieNode<KeyMap> > ) : MatchType {
+  private static classify(bestMatch: Optional<TrieNode<KeyMap>>): MatchType {
     if (!bestMatch) {
       return MatchType.NoMatch;
     }
@@ -357,26 +355,24 @@ class MatchMachine implements StateMachine<KeyPress, MatchMachineState> {
     this.currentMatches = [];
   }
 
-  public advance(keypress: KeyPress): MatchMachineState {
+  public advance = (keypress: KeyPress): MatchMachineState => {
     this.currentSequence.push(keypress);
 
     const bestMatch = this.trie.bestMatch(this.currentSequence);
-    const matchType = MatchMachine.classify( bestMatch)
+    const matchType = MatchMachine.classify(bestMatch);
 
     this.currentMatches = bestMatch ? bestMatch.leafValues() : [];
 
     switch (this.currentState) {
       // Start Matching
       case MatchMachineState.NoMatch:
-        if ( matchType === MatchType.NoMatch) {
-          this.currentSequence.pop()
+        if (matchType === MatchType.NoMatch) {
+          this.currentSequence.pop();
           this.currentState = MatchMachineState.NoMatch;
-        }
-        else if ( matchType === MatchType.FullMatch) {
+        } else if (matchType === MatchType.FullMatch) {
           // Suspicious to have a full match here.
           this.currentState = MatchMachineState.SuccessMatch;
-        }
-        else {
+        } else {
           this.currentState = MatchMachineState.StartedMatch;
         }
         return this.currentState;
@@ -384,20 +380,17 @@ class MatchMachine implements StateMachine<KeyPress, MatchMachineState> {
       case MatchMachineState.StartedMatch:
       case MatchMachineState.RetainedMatch:
       case MatchMachineState.ImprovedMatch:
-          if ( keypress.classification() === PressType.NoKey) {
-            this.currentSequence.pop();
-            this.currentState = MatchMachineState.RetainedMatch;
-          }
-          else if ( matchType === MatchType.NoMatch ) {
-            this.currentState = MatchMachineState.InvalidMatch;
-          }
-          else if ( matchType === MatchType.FullMatch) {
-            this.currentState = MatchMachineState.SuccessMatch;
-          }
-          else {
-            this.currentState = MatchMachineState.ImprovedMatch;
-          }
-          return this.currentState;
+        if (keypress.classification() === PressType.NoKey) {
+          this.currentSequence.pop();
+          this.currentState = MatchMachineState.RetainedMatch;
+        } else if (matchType === MatchType.NoMatch) {
+          this.currentState = MatchMachineState.InvalidMatch;
+        } else if (matchType === MatchType.FullMatch) {
+          this.currentState = MatchMachineState.SuccessMatch;
+        } else {
+          this.currentState = MatchMachineState.ImprovedMatch;
+        }
+        return this.currentState;
       // Clear previous matching and rematch
       case MatchMachineState.SuccessMatch:
       case MatchMachineState.InvalidMatch:
@@ -406,13 +399,13 @@ class MatchMachine implements StateMachine<KeyPress, MatchMachineState> {
         this.currentMatches = [];
         return this.advance(keypress);
     }
-  }
+  };
 
-  public allMatches(): readonly KeyMap[] {
+  public allMatches = (): readonly KeyMap[] => {
     return this.currentMatches;
-  }
+  };
 
-  public fullMatch(): Optional<KeyMap> {
+  public fullMatch = (): Optional<KeyMap> => {
     const numMatches = this.allMatches().length;
     const isFullMatch = this.currentState === MatchMachineState.SuccessMatch;
 
@@ -428,13 +421,10 @@ class MatchMachine implements StateMachine<KeyPress, MatchMachineState> {
       return this.currentMatches[0];
     }
     return null;
-  }
-
-
+  };
 }
 
 // endregion
-
 
 // region Registering of new keymaps
 
@@ -456,16 +446,16 @@ class RegisterMachine implements StateMachine<KeyPress, RegisterMachineState> {
     this.currentSequence = [];
   }
 
-  public advance(event: KeyPress): RegisterMachineState {
+  public readonly advance = (event: KeyPress): RegisterMachineState => {
     this.currentSequence.push(event);
     const classification = event.classification();
 
     switch (this.currentState) {
       case RegisterMachineState.NoKeys:
-        if ( classification === PressType.NoKey) {
+        if (classification === PressType.NoKey) {
           this.currentSequence.pop();
           this.currentState = RegisterMachineState.RetainedKeys;
-        } else if ( classification === PressType.SpecialKey) {
+        } else if (classification === PressType.SpecialKey) {
           this.currentState = RegisterMachineState.PendingConfirmation;
         } else {
           this.currentState = RegisterMachineState.FirstKey;
@@ -476,10 +466,10 @@ class RegisterMachine implements StateMachine<KeyPress, RegisterMachineState> {
       case RegisterMachineState.RetainedKeys:
       case RegisterMachineState.BacktrackedKey:
       case RegisterMachineState.AddedKeys:
-        if ( classification === PressType.NoKey) {
+        if (classification === PressType.NoKey) {
           this.currentSequence.pop();
           this.currentState = RegisterMachineState.RetainedKeys;
-        } else if ( classification === PressType.SpecialKey) {
+        } else if (classification === PressType.SpecialKey) {
           this.currentState = RegisterMachineState.PendingConfirmation;
         } else {
           this.currentState = RegisterMachineState.AddedKeys;
@@ -491,14 +481,14 @@ class RegisterMachine implements StateMachine<KeyPress, RegisterMachineState> {
           this.currentSequence.pop();
           this.currentState = RegisterMachineState.FinishedRegistering;
         } else if (event.key === 'Enter') {
-			this.currentSequence.pop()
+          this.currentSequence.pop();
           this.currentState = RegisterMachineState.AddedKeys;
         } else if (event.key === 'Backspace') {
           this.currentSequence.pop();
-		  this.currentSequence.pop();
+          this.currentSequence.pop();
           this.currentState = RegisterMachineState.BacktrackedKey;
         } else {
-			this.currentSequence.pop();
+          this.currentSequence.pop();
           this.currentState = RegisterMachineState.PendingConfirmation;
         }
         return this.currentState;
@@ -508,38 +498,35 @@ class RegisterMachine implements StateMachine<KeyPress, RegisterMachineState> {
         return this.advance(event);
       }
     }
-  }
+  };
 
-  public presses(): readonly KeyPress[] {
+  public readonly presses = (): readonly KeyPress[] => {
     return this.currentSequence;
-  }
+  };
 
-  public representation(): string {
+  public readonly representation = (): string => {
     return this.presses()
       .map((key) => key.repr())
       .join(' => ');
-  }
+  };
 
-  private reset(): void {
+  private readonly reset = (): void => {
     this.currentState = RegisterMachineState.NoKeys;
     this.currentSequence = [];
-  }
+  };
 }
-class  KeymapRegisterer extends Modal {
 
-	private readonly  registerMachine: RegisterMachine;
-	private readonly customParent: LeaderSettingsTab;
+class KeymapRegisterer extends Modal {
+  private readonly registerMachine: RegisterMachine;
+  private readonly customParent: LeaderSettingsTab;
 
-  constructor( parent: LeaderSettingsTab ) {
-	  super(parent.app);
-
-    this.customParent = parent
+  constructor(parent: LeaderSettingsTab) {
+    super(parent.app);
+    this.customParent = parent;
     this.registerMachine = new RegisterMachine();
-
   }
 
-
-  public onOpen() : void {
+  public readonly onOpen = (): void => {
     const introText = document.createElement('p');
     introText.setText('Just Testing, you know');
     this.contentEl.appendChild(introText);
@@ -547,23 +534,24 @@ class  KeymapRegisterer extends Modal {
     document.addEventListener('keydown', this.handleKeyDown);
   };
 
-  public onClose = () : void => {
+  public readonly onClose = (): void => {
     document.removeEventListener('keydown', this.handleKeyDown);
     this.redraw();
     this.contentEl.empty();
   };
 
-  private readonly redraw = () : void => {
-    this.customParent.display()
-  }
-	private readonly  saveKeyMap = ( keymap : KeyMap): void => {
-    this.customParent.updateHotkeyInSettings( null , null, null , null)
-  }
+  private readonly redraw = (): void => {
+    this.customParent.display();
+  };
+
+  private readonly saveKeyMap = (keymap: KeyMap): void => {
+    this.customParent.updateHotkeyInSettings(null, null, null, null);
+  };
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
-    console.log( event );
-	  console.log( this.registerMachine );
-	  const keyPress = KeyPress.fromEvent(event);
+    console.log(event);
+    console.log(this.registerMachine);
+    const keyPress = KeyPress.fromEvent(event);
     const registerState = this.registerMachine.advance(keyPress);
 
     switch (registerState) {
@@ -644,23 +632,27 @@ class  KeymapRegisterer extends Modal {
     }
   };
 
-  private readonly  setText = (text: string): void => {
+  private readonly setText = (text: string): void => {
     this.contentEl.empty();
     const introText = document.createElement('p');
     introText.setText(text);
     this.contentEl.appendChild(introText);
-  }
+  };
 
-  private readonly  existingSettingsConflict = (keyPresses: readonly KeyPress[]): KeyMap[] => {
+  private readonly existingSettingsConflict = (
+    keyPresses: readonly KeyPress[],
+  ): KeyMap[] => {
     return [];
-  }
-
+  };
 }
 
 // endregion
 
 class LeaderSettingsTab extends PluginSettingTab {
-  private static readonly listCommands = ( app: App, query?: string, ): ObsidianCommand[] => {
+  private static readonly listCommands = (
+    app: App,
+    query?: string,
+  ): ObsidianCommand[] => {
     const anyApp = app as any;
     const commands: CommandMap = anyApp.commands.commands;
     let result = Object.values(commands);
@@ -755,9 +747,9 @@ class LeaderSettingsTab extends PluginSettingTab {
         keySetter.addClass('setting-hotkey');
         keySetter.setText(hotkeyToName(configuredCommand));
         keySetter.addEventListener('click', (e: Event) => {
-          let registerer = new KeymapRegisterer( this );
-			console.log( registerer );
-			registerer.open();
+          let registerer = new KeymapRegisterer(this);
+          console.log(registerer);
+          registerer.open();
         });
         settingControl.insertBefore(keySetter, settingControl.children[1]);
 
@@ -798,9 +790,9 @@ class LeaderSettingsTab extends PluginSettingTab {
       keySetter.addClass('setting-hotkey');
       keySetter.setText(hotkeyToName(this.tempNewHotkey));
       keySetter.addEventListener('click', (e: Event) => {
-		  let registerer = new KeymapRegisterer( this );
-		  console.log( registerer );
-		  registerer.open();
+        let registerer = new KeymapRegisterer(this);
+        console.log(registerer);
+        registerer.open();
       });
       settingControl.insertBefore(keySetter, settingControl.children[1]);
 
@@ -825,12 +817,18 @@ class LeaderSettingsTab extends PluginSettingTab {
     }
   }
 
-  public validateNewHotkey( key: string, meta: boolean, shift: boolean, ): boolean  {
+  public validateNewHotkey(
+    key: string,
+    meta: boolean,
+    shift: boolean,
+  ): boolean {
     for (let i = 0; i < this.plugin.settings.hotkeys.length; i++) {
       const hotkey = this.plugin.settings.hotkeys[i];
-      if ( hotkey.key === key &&
-           hotkey.meta === meta &&
-           hotkey.shift === shift ) {
+      if (
+        hotkey.key === key &&
+        hotkey.meta === meta &&
+        hotkey.shift === shift
+      ) {
         const hotkeyName = hotkeyToName(hotkey);
         new Notice(`Leader hotkey '${hotkeyName}' is already in use`);
         return false;
@@ -838,9 +836,9 @@ class LeaderSettingsTab extends PluginSettingTab {
     }
 
     return true;
-  };
+  }
 
-  public deleteHotkeyFromSettings ( existingHotkey: KeyMap ): void  {
+  public deleteHotkeyFromSettings(existingHotkey: KeyMap): void {
     for (let i = 0; i < this.plugin.settings.hotkeys.length; i++) {
       const hotkey = this.plugin.settings.hotkeys[i];
       if (
@@ -857,9 +855,14 @@ class LeaderSettingsTab extends PluginSettingTab {
       this.plugin.settings.hotkeys.splice(i, 1);
     }
     this.plugin.saveData(this.plugin.settings);
-  };
+  }
 
-  public updateHotkeyInSettings( existingHotkey: KeyMap, newKey: string, meta: boolean, shift: boolean, ): void  {
+  public updateHotkeyInSettings(
+    existingHotkey: KeyMap,
+    newKey: string,
+    meta: boolean,
+    shift: boolean,
+  ): void {
     for (let i = 0; i < this.plugin.settings.hotkeys.length; i++) {
       const hotkey = this.plugin.settings.hotkeys[i];
       if (
@@ -881,12 +884,12 @@ class LeaderSettingsTab extends PluginSettingTab {
       break;
     }
     this.plugin.saveData(this.plugin.settings);
-  };
+  }
 
-  public updateHotkeyCommandInSettings (
+  public updateHotkeyCommandInSettings(
     existingHotkey: KeyMap,
     newCommand: string,
-  ): void  {
+  ): void {
     for (let i = 0; i < this.plugin.settings.hotkeys.length; i++) {
       const hotkey = this.plugin.settings.hotkeys[i];
       if (
@@ -906,7 +909,7 @@ class LeaderSettingsTab extends PluginSettingTab {
       break;
     }
     this.plugin.saveData(this.plugin.settings);
-  };
+  }
 
   private readonly storeNewHotkeyInSettings = (): void => {
     console.debug(
@@ -917,7 +920,6 @@ class LeaderSettingsTab extends PluginSettingTab {
     this.tempNewHotkey = newEmptyHotkey();
   };
 }
-
 
 const newEmptyHotkey = (): KeyMap => ({
   key: '',
@@ -976,56 +978,56 @@ export default class LeaderHotkeys extends Plugin {
     switch (currentState) {
       case MatchMachineState.NoMatch:
         writeConsole(
-            'An keypress resulted in a NoMatch state. Letting this event pass.',
+          'An keypress resulted in a NoMatch state. Letting this event pass.',
         );
         return;
 
       case MatchMachineState.InvalidMatch:
-      {
-        event.preventDefault();
-        writeConsole(
+        {
+          event.preventDefault();
+          writeConsole(
             'An keypress resulted in a ExitMatch. Exiting matching state.',
-        );
-      }
+          );
+        }
         return;
 
       case MatchMachineState.StartedMatch:
-      {
-        event.preventDefault();
-        writeConsole(
+        {
+          event.preventDefault();
+          writeConsole(
             'An keypress resulted in a LeaderMatch. Entering matching state.',
-        );
-      }
+          );
+        }
         return;
 
       case MatchMachineState.RetainedMatch:
-      {
-        event.preventDefault();
-        writeConsole(
+        {
+          event.preventDefault();
+          writeConsole(
             'An keypress resulted in a RetainedMatch. Retaining matching state.',
-        );
-      }
+          );
+        }
         return;
 
       case MatchMachineState.ImprovedMatch:
-      {
-        event.preventDefault();
-        writeConsole(
+        {
+          event.preventDefault();
+          writeConsole(
             'An keypress resulted in a ImprovedMatch. Waiting for the rest of the key sequence.',
-        );
-      }
+          );
+        }
         return;
 
       case MatchMachineState.SuccessMatch:
-      {
-        event.preventDefault();
-        writeConsole(
+        {
+          event.preventDefault();
+          writeConsole(
             'An keypress resulted in a FullMatch. Dispatching keymap.',
-        );
+          );
 
-        const keymap = this.matcher.fullMatch();
-        this.invoke(keymap);
-      }
+          const keymap = this.matcher.fullMatch();
+          this.invoke(keymap);
+        }
         return;
     }
   };
@@ -1039,7 +1041,7 @@ export default class LeaderHotkeys extends Plugin {
       writeConsole('Successfully loaded previous settings.');
     } else {
       writeConsole(
-          'No saved settings were found, default ones will be used instead.',
+        'No saved settings were found, default ones will be used instead.',
       );
     }
 
@@ -1087,7 +1089,7 @@ export default class LeaderHotkeys extends Plugin {
       app.commands.executeCommandById(keymap.commandID);
     } else {
       writeConsole(
-          'No keymap found for the full match. This is definitely a bug.',
+        'No keymap found for the full match. This is definitely a bug.',
       );
     }
   }

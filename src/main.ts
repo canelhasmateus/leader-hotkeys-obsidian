@@ -1,82 +1,13 @@
 import { App, Modal, Notice, Plugin, PluginSettingTab, Setting, } from 'obsidian';
 
+
 type Optional<T> = T | undefined | null;
 
+// region Trie
 interface Hashable {
 	serialize(): string;
 }
 interface TrieAble extends Iterable<Hashable> {
-}
-
-
-class KeyPress {
-	public static fromEvent( event: KeyboardEvent ): KeyPress {
-		const key   = event.key;
-		const shift = event.shiftKey;
-		const ctrl  = event.ctrlKey;
-		const alt   = event.altKey;
-		const meta  = event.metaKey
-		return new KeyPress( key, shift, alt, ctrl, meta );
-	}
-
-	public static fromCustom( binding: CustomCommandEntry ): KeyPress {
-		console.log( binding );
-		const key   = binding.key
-		const shift = binding.modifiers.contains( 'Shift' );
-		const ctrl  = binding.modifiers.contains( 'Ctrl' );
-		const alt   = binding.modifiers.contains( 'Alt' );
-		const meta  = binding.modifiers.contains( 'Meta' );
-		return new KeyPress( key, shift, ctrl, alt, meta );
-	}
-
-
-	public readonly key: string;
-	public readonly alt: boolean;
-	public readonly ctrl: boolean;
-	public readonly shift: boolean;
-	public readonly meta: boolean;
-
-	constructor( key: string, shift: boolean, alt: boolean, ctrl: boolean, meta: boolean ) {
-		this.key   = key;
-		this.shift = shift;
-		this.alt   = alt
-		this.ctrl  = ctrl
-		this.meta  = meta;
-	}
-
-	public repr(): string {
-		const metaRepr  = this.meta ? '⌘ + ' : '';
-		const altRepr   = this.alt ? 'Alt + ' : '';
-		const ctrlRepr  = this.ctrl ? 'Ctrl + ' : '';
-		const shiftRepr = this.shift ? '⇧ + ' : '';
-
-		return [ metaRepr, ctrlRepr, altRepr, shiftRepr, this.key ].join( '' );
-	}
-
-	public serialize(): string {
-		return this.repr();
-	}
-
-	public containsKey(): boolean {
-		return (
-			this.key !== null &&
-			this.key !== undefined &&
-			this.key !== 'Alt' &&
-			this.key !== 'Control' &&
-			this.key !== 'Shift' &&
-			this.key !== 'Meta'
-		);
-	}
-
-}
-
-class KeyMap {
-	public sequence: KeyPress[];
-	public commandID: string;
-
-	public [ Symbol.iterator ](): Iterator<KeyPress> {
-		return this.sequence.values();
-	}
 }
 
 class TrieNode<T> {
@@ -107,7 +38,7 @@ class TrieNode<T> {
 		return result;
 	}
 
-	public allValues(): T[] {
+	public leafValues(): T[] {
 		return this.leaves().map( ( node ) => node.value );
 	}
 
@@ -160,83 +91,160 @@ class Trie<T extends TrieAble> {
 		return lastNode;
 	}
 }
+// endregion
 
-enum MatchingState {
-	NoMatch,
-	LeaderMatch,
-	PartialMatch,
-	FullMatch,
-	ExitMatch,
+// region Fundamental Domain
+class KeyPress implements Hashable{
+	public static fromEvent( event: KeyboardEvent ): KeyPress {
+		const key   = event.key;
+		const shift = event.shiftKey;
+		const ctrl  = event.ctrlKey;
+		const alt   = event.altKey;
+		const meta  = event.metaKey
+		return new KeyPress( key, shift, alt, ctrl, meta );
+	}
+
+	public static fromCustom( binding: CustomCommandEntry ): KeyPress {
+		console.log( binding );
+		const key   = binding.key
+		const shift = binding.modifiers.contains( 'Shift' );
+		const ctrl  = binding.modifiers.contains( 'Ctrl' );
+		const alt   = binding.modifiers.contains( 'Alt' );
+		const meta  = binding.modifiers.contains( 'Meta' );
+		return new KeyPress( key, shift, ctrl, alt, meta );
+	}
+
+
+	public readonly key: string;
+	public readonly alt: boolean;
+	public readonly ctrl: boolean;
+	public readonly shift: boolean;
+	public readonly meta: boolean;
+
+	public constructor( key: string, shift: boolean, alt: boolean, ctrl: boolean, meta: boolean ) {
+		this.key   = key;
+		this.shift = shift;
+		this.alt   = alt
+		this.ctrl  = ctrl
+		this.meta  = meta;
+	}
+
+	public repr(): string {
+		const metaRepr  = this.meta ? '⌘ + ' : '';
+		const altRepr   = this.alt ? 'Alt + ' : '';
+		const ctrlRepr  = this.ctrl ? 'Ctrl + ' : '';
+		const shiftRepr = this.shift ? '⇧ + ' : '';
+
+		return [ metaRepr, ctrlRepr, altRepr, shiftRepr, this.key ].join( '' );
+	}
+
+	public serialize(): string {
+		// todo possibly use another representation
+		return this.repr();
+	}
+
+	public containsKey(): boolean {
+		return (
+			this.key !== null &&
+			this.key !== undefined &&
+			this.key !== 'Alt' &&
+			this.key !== 'Control' &&
+			this.key !== 'Shift' &&
+			this.key !== 'Meta'
+		);
+	}
+
 }
 
-class StateMachine {
+class KeyMap implements Iterable<KeyPress>{
+	public sequence: KeyPress[];
+	public commandID: string;
+
+	public [ Symbol.iterator ](): Iterator<KeyPress> {
+		return this.sequence.values();
+	}
+}
+// endregion
+
+// region Workspace Keymap Management
+enum MatchingState {
+	NoMatch,
+	StartedMatch,
+	RetainedMatch,
+	ImprovedMatch,
+	SuccessMatch,
+	InvalidMatch,
+}
+
+class MatchingMachine {
 	private readonly trie: Trie< KeyMap>;
 	private currentState: MatchingState;
-	private keyPressBuffer: KeyPress[];
-	private availableCommands: KeyMap[];
+	private currentSequence: KeyPress[];
+	private currentMatches: KeyMap[];
 
 	constructor( hotkeys: KeyMap[] ) {
 		this.trie              = new Trie( hotkeys );
 		this.currentState      = MatchingState.NoMatch;
-		this.keyPressBuffer    = [];
-		this.availableCommands = [];
+		this.currentSequence    = [];
+		this.currentMatches = [];
 	}
 
 	public advance( keypress: KeyPress ): MatchingState {
-		this.keyPressBuffer.push( keypress );
+		this.currentSequence.push( keypress );
 
 		switch ( this.currentState ) {
 			// Start Matching
 			case MatchingState.NoMatch: {
-				const bestMatch        = this.trie.bestMatch( this.keyPressBuffer );
-				this.availableCommands = bestMatch ? bestMatch.allValues() : [];
+				const bestMatch        = this.trie.bestMatch( this.currentSequence );
+				this.currentMatches = bestMatch ? bestMatch.leafValues() : [];
 				// No Match Logic
 				if ( !bestMatch ) {
-					this.clear();
+					this.reset();
 					this.currentState = MatchingState.NoMatch;
 				} else if ( bestMatch.isLeaf() ) {
-					this.currentState = MatchingState.FullMatch;
+					this.currentState = MatchingState.SuccessMatch;
 				} else {
-					this.currentState = MatchingState.LeaderMatch;
+					this.currentState = MatchingState.StartedMatch;
 				}
 			}
 				return this.currentState;
 			// Continue / Finish Matching
-			case MatchingState.LeaderMatch:
-			case MatchingState.PartialMatch:
+			case MatchingState.StartedMatch:
+			case MatchingState.RetainedMatch:
+			case MatchingState.ImprovedMatch:
 				if ( !keypress.containsKey() ) {
-					this.keyPressBuffer.pop();
-					this.currentState = MatchingState.PartialMatch;
+					this.currentSequence.pop();
+					this.currentState = MatchingState.RetainedMatch;
 					return this.currentState;
 				}
 			{
-				const bestMatch        = this.trie.bestMatch( this.keyPressBuffer );
-				this.availableCommands = bestMatch ? bestMatch.allValues() : [];
+				const bestMatch        = this.trie.bestMatch( this.currentSequence );
+				this.currentMatches = bestMatch ? bestMatch.leafValues() : [];
 
 				if ( !bestMatch ) {
-					this.currentState = MatchingState.ExitMatch;
+					this.currentState = MatchingState.InvalidMatch;
 				} else if ( bestMatch.isLeaf() ) {
-					this.currentState = MatchingState.FullMatch;
+					this.currentState = MatchingState.SuccessMatch;
 				} else {
-					this.currentState = MatchingState.PartialMatch;
+					this.currentState = MatchingState.ImprovedMatch;
 				}
 			}
 				return this.currentState;
-			// Clear previous matching and rematch. this is a bit confusing. Can we do better?
-			case MatchingState.FullMatch:
-			case MatchingState.ExitMatch:
-				this.clear();
+			// Clear previous matching and rematch
+			case MatchingState.SuccessMatch:
+			case MatchingState.InvalidMatch:
+				this.reset();
 				return this.advance( keypress );
 		}
 	}
 
-	public getPartialMatchedKeymaps(): readonly KeyMap[] {
-		return this.availableCommands;
+	public allMatches(): readonly KeyMap[] {
+		return this.currentMatches;
 	}
 
-	public getFullyMatchedKeymap(): Optional<KeyMap> {
-		const availableCommandLength = this.getPartialMatchedKeymaps().length;
-		const isFullMatch            = this.currentState === MatchingState.FullMatch;
+	public fullMatch(): Optional<KeyMap> {
+		const availableCommandLength = this.allMatches().length;
+		const isFullMatch            = this.currentState === MatchingState.SuccessMatch;
 
 		// Sanity checking.
 		if ( isFullMatch && availableCommandLength !== 1 ) {
@@ -247,17 +255,19 @@ class StateMachine {
 		}
 
 		if ( isFullMatch && availableCommandLength === 1 ) {
-			return this.availableCommands[ 0 ];
+			return this.currentMatches[ 0 ];
 		}
 		return null;
 	}
 
-	private clear(): void {
+	private reset(): void {
 		this.currentState      = MatchingState.NoMatch;
-		this.keyPressBuffer    = [];
-		this.availableCommands = [];
+		this.currentSequence    = [];
+		this.currentMatches = [];
 	}
 }
+// endregion
+
 
 interface PluginSettings {
 	hotkeys: KeyMap[];
@@ -314,7 +324,7 @@ interface CommandHolder {
 
 export default class LeaderHotkeysPlugin extends Plugin {
 	public settings: PluginSettings;
-	private state: StateMachine;
+	private state: MatchingMachine;
 
 	public async onload(): Promise<void> {
 		writeConsole( 'Started Loading.' );
@@ -343,33 +353,33 @@ export default class LeaderHotkeysPlugin extends Plugin {
 				);
 				return;
 
-			case MatchingState.ExitMatch:
+			case MatchingState.InvalidMatch:
 				event.preventDefault();
 				writeConsole(
 					'An keypress resulted in a ExitMatch. Exiting matching state.',
 				);
 				return;
 
-			case MatchingState.LeaderMatch:
+			case MatchingState.StartedMatch:
 				event.preventDefault();
 				writeConsole(
 					'An keypress resulted in a LeaderMatch. Entering matching state.',
 				);
 				return;
 
-			case MatchingState.PartialMatch:
+			case MatchingState.ImprovedMatch:
 				event.preventDefault();
 				writeConsole(
 					'An keypress resulted in a ParialMatch. Waiting for the rest of the key sequence.',
 				);
 				return;
 
-			case MatchingState.FullMatch:
+			case MatchingState.SuccessMatch:
 				event.preventDefault();
 				writeConsole(
 					'An keypress resulted in a FullMatch. Dispatching keymap.',
 				);
-				const keymap = this.state.getFullyMatchedKeymap();
+				const keymap = this.state.fullMatch();
 				if ( keymap ) {
 					const app = this.app as any;
 					app.commands.executeCommandById( keymap.commandID );
@@ -396,7 +406,7 @@ export default class LeaderHotkeysPlugin extends Plugin {
 		}
 
 		this.settings = savedSettings || defaultSettings;
-		this.state    = new StateMachine( this.settings.hotkeys );
+		this.state    = new MatchingMachine( this.settings.hotkeys );
 	}
 
 	private async _registerWorkspaceEvents(): Promise<void> {
@@ -450,14 +460,13 @@ class SetHotkeyModal extends Modal {
 	}
 
 	public onOpen = (): void => {
-		const { contentEl } = this;
 
 		const introText = document.createElement( 'p' );
 		introText.setText(
 			`Press a key to use as the hotkey after the leader (${ this.currentLeader }) is pressed...`,
 		);
 
-		contentEl.appendChild( introText );
+		this.contentEl.appendChild( introText );
 
 		document.addEventListener( 'keydown', this.handleKeyDown );
 	};
@@ -465,12 +474,12 @@ class SetHotkeyModal extends Modal {
 	public onClose = (): void => {
 		document.removeEventListener( 'keydown', this.handleKeyDown );
 		this.redraw();
-
-		const { contentEl } = this;
-		contentEl.empty();
+		this.contentEl.empty();
 	};
 
 	private readonly handleKeyDown = ( event: KeyboardEvent ): void => {
+		const keyPress = KeyPress.fromEvent( event )
+
 		if ( [ 'Shift', 'Meta', 'Escape' ].contains( event.key ) ) {
 			return;
 		}

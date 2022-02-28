@@ -491,11 +491,14 @@ class RegisterMachine implements StateMachine<KeyPress, RegisterMachineState> {
           this.currentSequence.pop();
           this.currentState = RegisterMachineState.FinishedRegistering;
         } else if (event.key === 'Enter') {
+			this.currentSequence.pop()
           this.currentState = RegisterMachineState.AddedKeys;
         } else if (event.key === 'Backspace') {
           this.currentSequence.pop();
+		  this.currentSequence.pop();
           this.currentState = RegisterMachineState.BacktrackedKey;
         } else {
+			this.currentSequence.pop();
           this.currentState = RegisterMachineState.PendingConfirmation;
         }
         return this.currentState;
@@ -522,13 +525,19 @@ class RegisterMachine implements StateMachine<KeyPress, RegisterMachineState> {
     this.currentSequence = [];
   }
 }
-class KeymapRegisterer extends Modal {
-  private readonly keyRegister: RegisterMachine;
+class  KeymapRegisterer extends Modal {
 
-  constructor( parent: PluginSettingTab ) {
-    super(parent.app);
-    this.keyRegister = new RegisterMachine();
+	private readonly  registerMachine: RegisterMachine;
+	private readonly customParent: LeaderSettingsTab;
+
+  constructor( parent: LeaderSettingsTab ) {
+	  super(parent.app);
+
+    this.customParent = parent
+    this.registerMachine = new RegisterMachine();
+
   }
+
 
   public onOpen() : void {
     const introText = document.createElement('p');
@@ -538,20 +547,24 @@ class KeymapRegisterer extends Modal {
     document.addEventListener('keydown', this.handleKeyDown);
   };
 
-  public onClose() : void {
+  public onClose = () : void => {
     document.removeEventListener('keydown', this.handleKeyDown);
     this.redraw();
     this.contentEl.empty();
   };
 
-  private redraw() : void {
-
+  private readonly redraw = () : void => {
+    this.customParent.display()
+  }
+	private readonly  saveKeyMap = ( keymap : KeyMap): void => {
+    this.customParent.updateHotkeyInSettings( null , null, null , null)
   }
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
-    console.log(event);
-    const keyPress = KeyPress.fromEvent(event);
-    const registerState = this.keyRegister.advance(keyPress);
+    console.log( event );
+	  console.log( this.registerMachine );
+	  const keyPress = KeyPress.fromEvent(event);
+    const registerState = this.registerMachine.advance(keyPress);
 
     switch (registerState) {
       case RegisterMachineState.NoKeys:
@@ -572,7 +585,7 @@ class KeymapRegisterer extends Modal {
         writeConsole(
           'An keypress resulted in a FirstKey state. Awaiting further keypresses.',
         );
-        this.setText(this.keyRegister.representation());
+        this.setText(this.registerMachine.representation());
         return;
 
       case RegisterMachineState.BacktrackedKey:
@@ -580,7 +593,7 @@ class KeymapRegisterer extends Modal {
         writeConsole(
           'An keypress resulted in a BacktrackedKey state. Awaiting further keypresses.',
         );
-        this.setText(this.keyRegister.representation());
+        this.setText(this.registerMachine.representation());
         return;
 
       case RegisterMachineState.AddedKeys:
@@ -588,7 +601,7 @@ class KeymapRegisterer extends Modal {
         writeConsole(
           'An keypress resulted in a AddedKeys state. Awaiting further keypresses.',
         );
-        this.setText(this.keyRegister.representation());
+        this.setText(this.registerMachine.representation());
         return;
 
       case RegisterMachineState.PendingConfirmation:
@@ -600,7 +613,7 @@ class KeymapRegisterer extends Modal {
 
           this.contentEl.empty();
           const introText = document.createElement('p');
-          introText.setText(this.keyRegister.representation());
+          introText.setText(this.registerMachine.representation());
           this.contentEl.appendChild(introText);
 
           // todo: Prettify.
@@ -616,31 +629,29 @@ class KeymapRegisterer extends Modal {
       case RegisterMachineState.FinishedRegistering:
         event.preventDefault();
         writeConsole('An keypress resulted in a FinishedRegistering state.');
-        const conflict = this.existingSettingsConflict(
-          this.keyRegister.presses(),
-        );
-        this.setText(
-          'This sequence conflicts with other sequences [ . . . ] . Please try again.',
-        );
-        return;
-        if (!conflict) {
-          return;
-        }
-
-        this.setNewKey(this.keyRegister.representation(), false, false);
+        // const conflict = this.existingSettingsConflict( this.keyRegister.presses(), );
+        // this.setText(
+        //   'This sequence conflicts with other sequences [ . . . ] . Please try again.',
+        // );
+        // return;
+        // if (!conflict) {
+        //   return;
+        // }
+        //
+        // this.setNewKey(this.keyRegister.representation(), false, false);
         this.close();
         return;
     }
   };
 
-  private setText(text: string): void {
+  private readonly  setText = (text: string): void => {
     this.contentEl.empty();
     const introText = document.createElement('p');
     introText.setText(text);
     this.contentEl.appendChild(introText);
   }
 
-  private existingSettingsConflict(keyPresses: readonly KeyPress[]): KeyMap[] {
+  private readonly  existingSettingsConflict = (keyPresses: readonly KeyPress[]): KeyMap[] => {
     return [];
   }
 
@@ -649,10 +660,7 @@ class KeymapRegisterer extends Modal {
 // endregion
 
 class LeaderSettingsTab extends PluginSettingTab {
-  private static readonly listCommands = (
-    app: App,
-    query?: string,
-  ): ObsidianCommand[] => {
+  private static readonly listCommands = ( app: App, query?: string, ): ObsidianCommand[] => {
     const anyApp = app as any;
     const commands: CommandMap = anyApp.commands.commands;
     let result = Object.values(commands);
@@ -671,14 +679,16 @@ class LeaderSettingsTab extends PluginSettingTab {
 
     return result ? KeyPress.fromCustom(result[0]) : null;
   };
+
   private readonly plugin: LeaderHotkeys;
   private commands: ObsidianCommand[];
-
   private tempNewHotkey: KeyMap;
 
   constructor(app: App, plugin: LeaderHotkeys) {
     super(app, plugin);
     this.plugin = plugin;
+    this.app = app;
+    // this.app = 2
   }
 
   public display(): void {
@@ -745,7 +755,9 @@ class LeaderSettingsTab extends PluginSettingTab {
         keySetter.addClass('setting-hotkey');
         keySetter.setText(hotkeyToName(configuredCommand));
         keySetter.addEventListener('click', (e: Event) => {
-          new KeymapRegisterer( this ).open();
+          let registerer = new KeymapRegisterer( this );
+			console.log( registerer );
+			registerer.open();
         });
         settingControl.insertBefore(keySetter, settingControl.children[1]);
 
@@ -786,7 +798,9 @@ class LeaderSettingsTab extends PluginSettingTab {
       keySetter.addClass('setting-hotkey');
       keySetter.setText(hotkeyToName(this.tempNewHotkey));
       keySetter.addEventListener('click', (e: Event) => {
-        new KeymapRegisterer( this).open();
+		  let registerer = new KeymapRegisterer( this );
+		  console.log( registerer );
+		  registerer.open();
       });
       settingControl.insertBefore(keySetter, settingControl.children[1]);
 
@@ -811,18 +825,12 @@ class LeaderSettingsTab extends PluginSettingTab {
     }
   }
 
-  private readonly validateNewHotkey = (
-    key: string,
-    meta: boolean,
-    shift: boolean,
-  ): boolean => {
+  public validateNewHotkey( key: string, meta: boolean, shift: boolean, ): boolean  {
     for (let i = 0; i < this.plugin.settings.hotkeys.length; i++) {
       const hotkey = this.plugin.settings.hotkeys[i];
-      if (
-        hotkey.key === key &&
-        hotkey.meta === meta &&
-        hotkey.shift === shift
-      ) {
+      if ( hotkey.key === key &&
+           hotkey.meta === meta &&
+           hotkey.shift === shift ) {
         const hotkeyName = hotkeyToName(hotkey);
         new Notice(`Leader hotkey '${hotkeyName}' is already in use`);
         return false;
@@ -832,9 +840,7 @@ class LeaderSettingsTab extends PluginSettingTab {
     return true;
   };
 
-  private readonly deleteHotkeyFromSettings = (
-    existingHotkey: KeyMap,
-  ): void => {
+  public deleteHotkeyFromSettings ( existingHotkey: KeyMap ): void  {
     for (let i = 0; i < this.plugin.settings.hotkeys.length; i++) {
       const hotkey = this.plugin.settings.hotkeys[i];
       if (
@@ -853,12 +859,7 @@ class LeaderSettingsTab extends PluginSettingTab {
     this.plugin.saveData(this.plugin.settings);
   };
 
-  private readonly updateHotkeyInSettings = (
-    existingHotkey: KeyMap,
-    newKey: string,
-    meta: boolean,
-    shift: boolean,
-  ): void => {
+  public updateHotkeyInSettings( existingHotkey: KeyMap, newKey: string, meta: boolean, shift: boolean, ): void  {
     for (let i = 0; i < this.plugin.settings.hotkeys.length; i++) {
       const hotkey = this.plugin.settings.hotkeys[i];
       if (
@@ -882,10 +883,10 @@ class LeaderSettingsTab extends PluginSettingTab {
     this.plugin.saveData(this.plugin.settings);
   };
 
-  private readonly updateHotkeyCommandInSettings = (
+  public updateHotkeyCommandInSettings (
     existingHotkey: KeyMap,
     newCommand: string,
-  ): void => {
+  ): void  {
     for (let i = 0; i < this.plugin.settings.hotkeys.length; i++) {
       const hotkey = this.plugin.settings.hotkeys[i];
       if (
